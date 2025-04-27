@@ -1,0 +1,24 @@
+@model ManufacturingChips.Models.SimulationParameters
+
+@{
+    ViewData["Title"] = "Simulation Start";
+}
+
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+    <title>title</title>
+</head>
+<body>
+<h1>Start Simulation</h1>
+
+<form asp-action="Run" method="post">
+    <div>
+        <label>Shift Duration (minutes):</label>
+        <input asp-for="ShiftDurationMinutes" type="number" min="1" />
+    </div>
+    <button type="submit">Start</button>
+</form>
+</body>
+</html>

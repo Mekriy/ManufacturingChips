@@ -1,8 +1,10 @@
 {
   "version": 2,
-  "dgSpecHash": "iaCUPGtPT00=",
+  "dgSpecHash": "M8NXkCR48i8=",
   "success": true,
   "projectFilePath": "C:\\NLTU\\Reports\\CourseWorkTRPO\\project\\ManufacturingChips\\ManufacturingChips\\ManufacturingChips.csproj",
-  "expectedPackageFiles": [],
+  "expectedPackageFiles": [
+    "C:\\Users\\andri\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512"
+  ],
   "logs": []
 }

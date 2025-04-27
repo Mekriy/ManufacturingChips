@@ -14,9 +14,7 @@ C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ManufacturingChips.MvcApplicationPartsAssemblyInfo.cache
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ManufacturingChips.RazorAssemblyInfo.cache
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ManufacturingChips.RazorAssemblyInfo.cs
-C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\scopedcss\Views\Shared\_Layout.cshtml.rz.scp.css
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\scopedcss\bundle\ManufacturingChips.styles.css
-C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\scopedcss\projectbundle\ManufacturingChips.bundle.scp.css
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\lmfuu5skmg-b9sayid5wm.gz
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\qxax8baqhg-61n19gt1b8.gz
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\c6qbq22ep1-xtxxf3hu2r.gz
@@ -79,8 +77,6 @@ C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\w1ef6p8xit-9vr69e8ynj.gz
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\stkxydtn3z-87fc7y1x7t.gz
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\i99621zlpy-mlv21k5csn.gz
-C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\vipfg5t1rq-xkgiuq04yz.gz
-C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\3p6vclf213-xkgiuq04yz.gz
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\staticwebassets.build.json
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\staticwebassets.development.json
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\staticwebassets.build.endpoints.json
@@ -95,3 +91,11 @@ C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ManufacturingChips.pdb
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ManufacturingChips.genruntimeconfig.cache
 C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ref\ManufacturingChips.dll
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ManufacturingChips.sourcelink.json
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\scopedcss\Views\Shared\_Layout.cshtml.rz.scp.css
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\scopedcss\projectbundle\ManufacturingChips.bundle.scp.css
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\vipfg5t1rq-xkgiuq04yz.gz
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\compressed\3p6vclf213-xkgiuq04yz.gz
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\bin\Debug\net9.0\Newtonsoft.Json.dll
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\ManufacturingChips.csproj.AssemblyReference.cache
+C:\NLTU\Reports\CourseWorkTRPO\project\ManufacturingChips\ManufacturingChips\obj\Debug\net9.0\Manufact.79355E46.Up2Date

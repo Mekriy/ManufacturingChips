@@ -20,28 +20,8 @@ build_property._RazorSourceGeneratorDebug =
 build_property.EffectiveAnalysisLevelStyle = 9.0
 build_property.EnableCodeStyleSeverity = 
 
-[C:/NLTU/Reports/CourseWorkTRPO/project/ManufacturingChips/ManufacturingChips/Views/Home/Index.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcSG9tZVxJbmRleC5jc2h0bWw=
-build_metadata.AdditionalFiles.CssScope = 
-
-[C:/NLTU/Reports/CourseWorkTRPO/project/ManufacturingChips/ManufacturingChips/Views/Home/Privacy.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcSG9tZVxQcml2YWN5LmNzaHRtbA==
-build_metadata.AdditionalFiles.CssScope = 
-
-[C:/NLTU/Reports/CourseWorkTRPO/project/ManufacturingChips/ManufacturingChips/Views/Shared/Error.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEVycm9yLmNzaHRtbA==
-build_metadata.AdditionalFiles.CssScope = 
-
-[C:/NLTU/Reports/CourseWorkTRPO/project/ManufacturingChips/ManufacturingChips/Views/Shared/_ValidationScriptsPartial.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXF9WYWxpZGF0aW9uU2NyaXB0c1BhcnRpYWwuY3NodG1s
-build_metadata.AdditionalFiles.CssScope = 
-
 [C:/NLTU/Reports/CourseWorkTRPO/project/ManufacturingChips/ManufacturingChips/Views/Simulation/Index.cshtml]
 build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2ltdWxhdGlvblxJbmRleC5jc2h0bWw=
-build_metadata.AdditionalFiles.CssScope = 
-
-[C:/NLTU/Reports/CourseWorkTRPO/project/ManufacturingChips/ManufacturingChips/Views/Simulation/Result.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2ltdWxhdGlvblxSZXN1bHQuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
 [C:/NLTU/Reports/CourseWorkTRPO/project/ManufacturingChips/ManufacturingChips/Views/_ViewImports.cshtml]

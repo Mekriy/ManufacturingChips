@@ -6,37 +6,100 @@ namespace ManufacturingChips.Controllers;
 
 public class SimulationController : Controller
 {
+    private static CancellationTokenSource _cts;
+    private static BlockingCollection<Product> _inputQueue;
+    private static Task _generatorTask;
+    private static Task[] _lineTasks;
+
+    private static int _totalGenerated;
+    private static List<LineStatistics> _latestStats;
+
+    private static int _lastLinesCount = 3;
+    private static int _lastMachinesPerLine = 4;
+    private static int _lastShiftDurationSeconds = 60;
+
+    private static bool _isRunning = false;
+
+    [HttpGet]
     public IActionResult Index()
     {
-        return View(new SimulationParameters());
+        var vm = new SimulationView
+        {
+            LinesCount = _lastLinesCount,
+            MachinesPerLine = _lastMachinesPerLine,
+            ShiftDurationSeconds = _lastShiftDurationSeconds
+        };
+        return View(vm);
     }
 
     [HttpPost]
-    public IActionResult Run(SimulationParameters parameters)
+    [Route("Simulation/StartSimulation")]
+    public IActionResult StartSimulation([FromBody] SimulationView vm)
     {
-        var inputQueue = new BlockingCollection<Product>();
-        var rnd = new Random();
-        var shiftDuration = TimeSpan.FromMinutes(parameters.ShiftDurationMinutes);
+        _lastLinesCount = vm.LinesCount;
+        _lastMachinesPerLine = vm.MachinesPerLine;
+        _lastShiftDurationSeconds = vm.ShiftDurationSeconds;
 
-        var endTime = DateTime.Now + shiftDuration;
-        var generatorTask = Task.Run(() =>
+        _isRunning = true;
+        _totalGenerated = 0;
+        _latestStats = null;
+
+        _cts = new CancellationTokenSource();
+        _inputQueue = new BlockingCollection<Product>();
+        var token = _cts.Token;
+
+        _generatorTask = Task.Run(() =>
         {
-            while (DateTime.Now < endTime)
+            var rnd = new Random();
+            var shiftDuration = TimeSpan.FromSeconds(vm.ShiftDurationSeconds);
+            var endTime = DateTime.Now + shiftDuration;
+
+            while (DateTime.Now < endTime && !token.IsCancellationRequested)
             {
-                inputQueue.Add(new Product());
-                var delay = rnd.Next(8, 13);
-                Thread.Sleep(TimeSpan.FromMinutes(delay));
+                _inputQueue.Add(new Product());
+                Interlocked.Increment(ref _totalGenerated);
+                Thread.Sleep(TimeSpan.FromSeconds(rnd.Next(8, 13)));
             }
-            inputQueue.CompleteAdding();
-        });
+            _inputQueue.CompleteAdding();
+        }, token);
 
-        var lines = new List<ProductionLine> { new(), new(), new() };
-        var lineTasks = lines.Select(line => Task.Run(() => line.Start(inputQueue, shiftDuration))).ToArray();
+        var lines = Enumerable.Range(0, vm.LinesCount)
+            .Select(_ => new ProductionLine(vm.MachinesPerLine))
+            .ToArray();
 
-        Task.WaitAll(lineTasks);
+        _lineTasks = lines
+            .Select((ln, idx) =>
+                Task.Run(() => ln.Start(_inputQueue, TimeSpan.Zero, CancellationToken.None)))
+            .ToArray();
 
-        var statistics = lines.Select((line, idx) => line.CollectStatistics(idx + 1, shiftDuration)).ToList();
+        Task.WhenAll(_generatorTask)
+            .ContinueWith(_ =>
+                Task.WhenAll(_lineTasks)
+                    .ContinueWith(__ =>
+                    {
+                        _latestStats = lines
+                            .Select((ln, idx) => ln.CollectStatistics(idx + 1, TimeSpan.FromSeconds(vm.ShiftDurationSeconds)))
+                            .ToList();
+                        _isRunning = false;
+                    })
+            );
 
-        return View("Result", statistics);
+        return Ok();
     }
+
+    [HttpPost]
+    public IActionResult Stop()
+    {
+        if (_isRunning && _inputQueue != null && !_inputQueue.IsAddingCompleted)
+            _inputQueue.CompleteAdding();
+        return Ok();
+    }
+
+    [HttpGet]
+    public IActionResult IsRunning()
+        => Json(_isRunning);
+
+    [HttpGet]
+    public IActionResult GetStats()
+        => Json(new { total = _totalGenerated, stats = _latestStats });
 }

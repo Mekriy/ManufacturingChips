@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ManufacturingChips")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0b3b107730dccbd9f26332025b3248c1b716e5c1")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2b19a07b14d557e4d8f0042719f49a63e7f0153c")]
 [assembly: System.Reflection.AssemblyProductAttribute("ManufacturingChips")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ManufacturingChips")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

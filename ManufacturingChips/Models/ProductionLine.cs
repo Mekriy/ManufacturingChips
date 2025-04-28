@@ -20,8 +20,10 @@ public class ProductionLine
 
     public void Start(BlockingCollection<Product> inputQueue, TimeSpan shiftDuration, CancellationToken token)
     {
-        var endTime = DateTime.Now + shiftDuration;
-        while ((DateTime.Now < endTime || inputQueue.Count > 0) && !token.IsCancellationRequested)
+        var endTime = DateTime.UtcNow + shiftDuration;
+
+        while ((DateTime.UtcNow < endTime || !inputQueue.IsCompleted) 
+               && !token.IsCancellationRequested)
         {
             if (inputQueue.TryTake(out var product, 100))
                 ProcessProduct(product, token);
@@ -30,12 +32,12 @@ public class ProductionLine
 
     private void ProcessProduct(Product product, CancellationToken token)
     {
-        for (var i = 0; i < 4 && !token.IsCancellationRequested; i++)
+        for (var i = 0; i < _machines.Length && !token.IsCancellationRequested; i++)
         {
             _machines[i].Enqueue(product, i);
             _machines[i].ProcessNext(SampleServiceTime(i), i);
 
-            if (i < 3)
+            if (i < _machines.Length - 1)
                 Thread.Sleep(TimeSpan.FromSeconds(SampleTransportTime(i)));
         }
     }
@@ -62,11 +64,11 @@ public class ProductionLine
             MachineStats = _machines
                 .Select((m, idx) => new MachineStatistics
                 {
-                    MachineIndex = idx + 1,
-                    Utilization = m.Utilization(shiftDuration),
-                    AverageQueueTime = m.AverageQueueTime(),
-                    AverageServiceTime = m.AverageServiceTime(),
-                    MaxQueueLength = m.MaxQueueLength,
+                    MachineIndex      = idx + 1,
+                    Utilization       = m.Utilization(shiftDuration),
+                    AverageQueueTime  = m.AverageQueueTime(),
+                    AverageServiceTime= m.AverageServiceTime(),
+                    MaxQueueLength    = m.MaxQueueLength,
                     ProcessedProducts = m.ProcessedCount
                 })
                 .ToList()

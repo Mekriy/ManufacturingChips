@@ -15,7 +15,7 @@ public class Machine
 
     public void Enqueue(Product product, int idx)
     {
-        product.EnterQueueAt[idx] = DateTime.Now;
+        product.EnterQueueAt[idx] = DateTime.UtcNow;
         _queue.Enqueue(product);
         lock (_statLock)
         {
@@ -27,13 +27,13 @@ public class Machine
     {
         if (!_queue.TryDequeue(out var product)) return;
 
-        product.LeaveQueueAt[idx] = DateTime.Now;
+        product.LeaveQueueAt[idx] = DateTime.UtcNow;
         var queueTime = product.LeaveQueueAt[idx] - product.EnterQueueAt[idx];
         lock (_statLock) TotalQueueTime += queueTime;
 
-        var start = DateTime.Now;
+        var start = DateTime.UtcNow;
         Thread.Sleep(TimeSpan.FromSeconds(serviceTimeSeconds));
-        var serviceDur = DateTime.Now - start;
+        var serviceDur = DateTime.UtcNow - start;
         lock (_statLock)
         {
             BusyTime += serviceDur;
@@ -43,7 +43,9 @@ public class Machine
     }
 
     public double Utilization(TimeSpan shiftDuration)
-        => BusyTime.TotalSeconds / shiftDuration.TotalSeconds;
+        => shiftDuration.TotalSeconds > 0
+            ? BusyTime.TotalSeconds / shiftDuration.TotalSeconds
+            : 0;
 
     public double AverageQueueTime()
         => ProcessedCount > 0 ? TotalQueueTime.TotalSeconds / ProcessedCount : 0;

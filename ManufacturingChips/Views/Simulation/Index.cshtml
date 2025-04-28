@@ -1,11 +1,11 @@
 @model ManufacturingChips.Models.SimulationView
 @{
-    ViewData["Title"] = "Симуляція виробництва";
+ViewData["Title"] = "Симуляція виробництва";
 }
 
 <h1>Налаштування та запуск симуляції</h1>
 
-<form id="simForm" class="row g-3">
+<form id="simForm" class="row g-3" onsubmit="return false;">
     <div class="col-md-2">
         <label asp-for="LinesCount">Ліній</label>
         <input asp-for="LinesCount" class="form-control" type="number" min="1" />
@@ -15,7 +15,7 @@
         <input asp-for="MachinesPerLine" class="form-control" type="number" min="1" />
     </div>
     <div class="col-md-3">
-        <label asp-for="ShiftDurationSeconds">Тривалість (с)</label>
+        <label asp-for="ShiftDurationSeconds">Тривалість зміни (сек)</label>
         <input asp-for="ShiftDurationSeconds" class="form-control" type="number" min="1" />
     </div>
     <div class="col-auto align-self-end">
@@ -24,7 +24,12 @@
     </div>
 </form>
 
-<form id="stopForm" class="mt-2">
+<!-- NEW: Timer display -->
+<div class="mt-3">
+    <h4>Час до закінчення зміни: <span id="timeDisplay">--:--</span></h4>
+</div>
+
+<form id="stopForm" class="mt-2" onsubmit="return false;">
     <button id="stopBtn" type="button" class="btn btn-danger" disabled>Зупинити</button>
 </form>
 
@@ -36,13 +41,13 @@
         <div id="animation" class="animation-container">
             @for (int line = 1; line <= Model.LinesCount; line++)
             {
-                <div class="line" id="line@line">
-                    <div class="queue" id="queue@line"></div>
-                    @for (int m = 0; m < Model.MachinesPerLine; m++)
-                    {
-                        <div class="machine" data-index="@m">M@(m+1)</div>
-                    }
-                </div>
+            <div class="line" id="line@line">
+                <div class="queue" id="queue@line"></div>
+                @for (int m = 0; m < Model.MachinesPerLine; m++)
+                {
+                <div class="machine" data-index="@m">M@(m+1)</div>
+                }
+            </div>
             }
         </div>
 
@@ -105,8 +110,13 @@
 }
 
 @section Scripts {
-    <script>
-    // Функція логування подій
+<script>
+    let intervals = [];
+    let pollInterval = null;
+    let timerInterval = null;
+    let shiftEndTime = null;
+
+    // Log helper
     function logEvent(msg) {
         const ul = document.getElementById("logList");
         const time = new Date().toLocaleTimeString();
@@ -115,8 +125,7 @@
         ul.prepend(li);
     }
 
-    // Анімація руху продуктів по лінії
-    let intervals = [];
+    // Start the chip‐spawn + move animation
     function startAnimation() {
         document.querySelectorAll(".line").forEach((lineElem, idx) => {
             const queueBox = lineElem.querySelector(".queue");
@@ -165,56 +174,62 @@
         });
     }
 
-    // Обробка кнопки "Почати"
-    document.getElementById("startBtn").addEventListener("click", async e => {
-        e.preventDefault();
-        const form = document.getElementById("simForm");
-        const data = {
-            linesCount: +form.elements["LinesCount"].value,
-            machinesPerLine: +form.elements["MachinesPerLine"].value,
-            shiftDurationSeconds: +form.elements["ShiftDurationSeconds"].value
-        };
-        [...form.querySelectorAll("input, button")].forEach(el => el.disabled = true);
-        document.getElementById("stopBtn").disabled = false;
-
-        // Виклик бекенд-старту
-        await fetch('@Url.Action("StartSimulation", "Simulation")', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-
-        startAnimation();
-
-        // Polling стану
-        (function poll() {
-            fetch('@Url.Action("IsRunning", "Simulation")')
-                .then(r => r.json())
-                .then(running => {
-                    if (running) {
-                        setTimeout(poll, 1000);
-                    } else {
-                        // Отримуємо статистику
-                        fetch('@Url.Action("GetStats", "Simulation")')
-                            .then(r => r.json())
-                            .then(renderStats);
-                        [...form.querySelectorAll("input, button")].forEach(el => el.disabled = false);
-                        document.getElementById("stopBtn").disabled = true;
-                    }
-                });
-        })();
-    });
-
-    // Кнопка "Зупинити" — форсований stop
-    document.getElementById("stopBtn").addEventListener("click", e => {
-        e.preventDefault();
+    // Stop both animation and backend
+    async function handleStop() {
+        // clear spawn intervals
         intervals.forEach(clearInterval);
         intervals = [];
-        document.getElementById("stopBtn").disabled = true;
-        fetch('@Url.Action("Stop", "Simulation")', { method: 'POST' });
-    });
 
-    // Функція відображення статистики
+        // stop timer
+        clearInterval(timerInterval);
+        document.getElementById("timeDisplay").textContent = "00:00";
+
+        // disable Stop button
+        document.getElementById("stopBtn").disabled = true;
+
+        // tell backend to cancel immediately
+        await fetch('@Url.Action("Stop","Simulation")', { method: 'POST' });
+    }
+
+    // Called when timer hits zero
+    function handleTimeUp() {
+        handleStop();
+    }
+
+    // Update countdown display each second
+    function updateTimer() {
+        const msLeft = shiftEndTime - Date.now();
+        if (msLeft <= 0) {
+            document.getElementById("timeDisplay").textContent = "00:00";
+            clearInterval(timerInterval);
+            handleTimeUp();
+        } else {
+            const secs = Math.floor(msLeft/1000);
+            const m = String(Math.floor(secs/60)).padStart(2,'0');
+            const s = String(secs%60).padStart(2,'0');
+            document.getElementById("timeDisplay").textContent = `${m}:${s}`;
+        }
+    }
+
+    // Poll server for IsRunning → when false, fetch stats
+    function startPolling() {
+        pollInterval = setInterval(async () => {
+            const resp = await fetch('@Url.Action("IsRunning","Simulation")');
+            const running = await resp.json();
+            if (!running) {
+                clearInterval(pollInterval);
+                // ensure animations are stopped
+                intervals.forEach(clearInterval);
+                intervals = [];
+                clearInterval(timerInterval);
+                fetchStats();
+                document.getElementById("startBtn").disabled = false;
+                document.getElementById("stopBtn").disabled = true;
+            }
+        }, 1000);
+    }
+
+    // Render the detailed machine‐level stats
     function renderStats(data) {
         const div = document.getElementById("statsContainer");
         if (!data.stats || !data.stats.length) {
@@ -249,5 +264,42 @@
         });
         div.innerHTML = html;
     }
+
+    async function fetchStats() {
+        const resp = await fetch('@Url.Action("GetStats","Simulation")');
+        const data = await resp.json();
+        renderStats(data);
+    }
+
+    // Start button wiring
+    document.getElementById("startBtn").addEventListener("click", async () => {
+        const form = document.getElementById("simForm");
+        const payload = {
+            LinesCount: +form.elements["LinesCount"].value,
+            MachinesPerLine: +form.elements["MachinesPerLine"].value,
+            ShiftDurationSeconds: +form.elements["ShiftDurationSeconds"].value
+        };
+
+        await fetch('@Url.Action("StartSimulation","Simulation")', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        // UI state
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("stopBtn").disabled = false;
+
+        // Set up countdown
+        shiftEndTime = Date.now() + payload.ShiftDurationSeconds * 1000;
+        updateTimer();
+        timerInterval = setInterval(updateTimer, 1000);
+
+        startAnimation();
+        startPolling();
+    });
+
+    document.getElementById("stopBtn").addEventListener("click", handleStop);
+
 </script>
 }

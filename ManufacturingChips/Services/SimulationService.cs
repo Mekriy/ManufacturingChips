@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using ManufacturingChips.Models;
 
 namespace ManufacturingChips.Services;
@@ -10,18 +9,15 @@ public class SimulationService
     private Task _simulationTask;
     private readonly object _lock = new();
 
-    private int _lines, _machinesPerLine, _durationSeconds;
+    private int _lines, _machinesPerLine;
     private List<LineStatistics> _lineStats;
-    private Stopwatch _stopwatch;
 
     public bool IsRunning { get; private set; }
 
-    private readonly double arrivalMean = 10;
-    private readonly double arrivalDev = 2;
-
+    // Параметри (в секундах)
+    private readonly double arrivalMean = 10, arrivalDev = 2;
     private readonly double[] serviceMean = { 12, 13, 7, 8 };
     private readonly double[] serviceDev = { 1, 3, 1, 3 };
-
     private readonly double[] transferMean = { 2, 1, 3 };
     private readonly double[] transferDev = { 1, 1, 1 };
 
@@ -34,22 +30,21 @@ public class SimulationService
 
         _lines = lines;
         _machinesPerLine = machinesPerLine;
-        _durationSeconds = durationSeconds;
 
         // Ініціалізація статистик
-        _lineStats = Enumerable.Range(1, lines)
+        _lineStats = Enumerable.Range(1, _lines)
             .Select(i => new LineStatistics
             {
                 LineNumber = i,
-                MachineStats = Enumerable.Range(0, machinesPerLine)
+                MachineStats = Enumerable.Range(0, _machinesPerLine)
                     .Select(m => new MachineStatistics { MachineIndex = m })
                     .ToList()
             }).ToList();
 
         _cts = new CancellationTokenSource();
-        _stopwatch = Stopwatch.StartNew();
-        IsRunning = true;
+        _cts.CancelAfter(TimeSpan.FromSeconds(durationSeconds)); // Автоматична зупинка
 
+        IsRunning = true;
         _simulationTask = Task.Run(() => RunSimulation(_cts.Token));
     }
 
@@ -75,25 +70,20 @@ public class SimulationService
 
         var tasks = Enumerable.Range(0, _lines).Select(lineIdx => Task.Run(async () =>
         {
-            while (!token.IsCancellationRequested && _stopwatch.Elapsed.TotalSeconds < _durationSeconds)
+            while (!token.IsCancellationRequested)
             {
-                // Інтервал між надходженнями (секунди)
-                var interarrival = NextUniform(arrivalMean, arrivalDev, rnd);
-                await Task.Delay(TimeSpan.FromSeconds(interarrival), token);
+                // Інтервал надходження
+                await Task.Delay(TimeSpan.FromSeconds(NextUniform(arrivalMean, arrivalDev, rnd)), token);
 
-                // Енк'ю
-                var enqueueTime = DateTime.UtcNow;
+                // Черга
+                var enq = DateTime.UtcNow;
                 var q = lineQueues.GetOrAdd(lineIdx, _ => new ConcurrentQueue<DateTime>());
-                q.Enqueue(enqueueTime);
-
+                q.Enqueue(enq);
                 lock (_lock)
-                {
-                    var len = q.Count;
                     foreach (var ms in _lineStats[lineIdx].MachineStats)
-                        ms.MaxQueueLength = Math.Max(ms.MaxQueueLength, len);
-                }
+                        ms.MaxQueueLength = Math.Max(ms.MaxQueueLength, q.Count);
 
-                // Обслуговування на кожній машині
+                // Обробка
                 for (int m = 0; m < _machinesPerLine; m++)
                 {
                     if (q.TryDequeue(out var t0))
@@ -102,26 +92,23 @@ public class SimulationService
                         lock (_lock) _lineStats[lineIdx].MachineStats[m].AverageQueueTime += qt;
                     }
 
-                    var meanSrv = serviceMean[Math.Min(m, serviceMean.Length - 1)];
-                    var devSrv = serviceDev[Math.Min(m, serviceDev.Length - 1)];
-                    var serviceTime = NextUniform(meanSrv, devSrv, rnd);
+                    var srv = NextUniform(serviceMean[Math.Min(m, serviceMean.Length - 1)],
+                        serviceDev[Math.Min(m, serviceDev.Length - 1)], rnd);
                     lock (_lock)
                     {
                         var ms = _lineStats[lineIdx].MachineStats[m];
-                        ms.AverageServiceTime += serviceTime;
+                        ms.AverageServiceTime += srv;
                         ms.ProcessedProducts++;
-                        ms.Utilization += serviceTime;
+                        ms.Utilization += srv;
                     }
 
-                    await Task.Delay(TimeSpan.FromSeconds(serviceTime), token);
+                    await Task.Delay(TimeSpan.FromSeconds(srv), token);
 
-                    // Передача до наступної машини
+                    // Передача
                     if (m < _machinesPerLine - 1 && m < transferMean.Length)
                     {
-                        var tMean = transferMean[m];
-                        var tDev = transferDev[m];
-                        var transferTime = NextUniform(tMean, tDev, rnd);
-                        await Task.Delay(TimeSpan.FromSeconds(transferTime), token);
+                        var tr = NextUniform(transferMean[m], transferDev[m], rnd);
+                        await Task.Delay(TimeSpan.FromSeconds(tr), token);
                     }
                 }
             }
@@ -129,7 +116,7 @@ public class SimulationService
 
         Task.WaitAll(tasks);
 
-        // Обрахунок середніх значень
+        // Фіналізація статистики
         lock (_lock)
         {
             foreach (var line in _lineStats)
@@ -139,11 +126,10 @@ public class SimulationService
                     var p = ms.ProcessedProducts;
                     ms.AverageQueueTime /= p;
                     ms.AverageServiceTime /= p;
-                    ms.Utilization /= _durationSeconds;
+                    ms.Utilization /= _cts.Token.CanBeCanceled ? p : 1; // нормалізація
                 }
         }
 
-        _stopwatch.Stop();
         IsRunning = false;
     }
 

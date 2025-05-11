@@ -8,18 +8,6 @@ public class SimulationController : Controller
 {
     private static readonly SimulationService _simService = new();
 
-    [HttpGet]
-    public IActionResult Index(int LinesCount = 1, int MachinesPerLine = 1, int ShiftDurationSeconds = 10)
-    {
-        var vm = new SimulationView
-        {
-            LinesCount = LinesCount,
-            MachinesPerLine = MachinesPerLine,
-            ShiftDurationSeconds = ShiftDurationSeconds
-        };
-        return View(vm);
-    }
-
     [HttpPost]
     public IActionResult StartSimulation([FromBody] SimulationView vm)
     {
@@ -39,4 +27,16 @@ public class SimulationController : Controller
 
     [HttpGet]
     public JsonResult GetStats() => Json(_simService.GetStats());
+
+    [HttpGet]
+    public IActionResult Index(int LinesCount = 1, int MachinesPerLine = 1, int ShiftDurationSeconds = 10)
+    {
+        var vm = new SimulationView
+        {
+            LinesCount = LinesCount,
+            MachinesPerLine = MachinesPerLine,
+            ShiftDurationSeconds = ShiftDurationSeconds
+        };
+        return View(vm);
+    }
 }

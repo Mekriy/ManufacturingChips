@@ -1,0 +1,10 @@
+@for (int line = 1; line <= Model.LinesCount; line++)
+{
+<div class="line" style="--mp:@Model.MachinesPerLine">
+    <div class="queue" id="queue@line"></div>
+    @for (int m = 0; m < Model.MachinesPerLine; m++)
+    {
+    <div class="machine" data-index="@m">M@(m+1)</div>
+    }
+</div>
+}

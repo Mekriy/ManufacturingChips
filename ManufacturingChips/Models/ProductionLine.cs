@@ -1,77 +1,86 @@
 using System.Collections.Concurrent;
+using ManufacturingChips.Models;
+using ManufacturingChips.Services;
 
-namespace ManufacturingChips.Models;
-
+namespace ManufacturingChips.Services;
 public class ProductionLine
 {
-    private readonly Machine[] _machines;
+    private readonly MachineService[] _machines;
     private readonly Random _rnd = new();
-    private readonly int[] _serviceTimes = { 12, 13, 7, 8 };
-    private readonly int[] _serviceDeviations = { 1, 3, 1, 3 };
-    private readonly int[] _transportTimes = { 2, 1, 3 };
-    private readonly int[] _transportDeviations = { 1, 1, 1 };
+    private readonly int[] _serviceTimes;
+    private readonly int[] _serviceDeviations;
+    private readonly int[] _transportTimes;
+    private readonly int[] _transportDeviations;
 
     public ProductionLine(int machinesCount)
     {
-        _machines = new Machine[machinesCount];
-        for (var i = 0; i < machinesCount; i++)
-            _machines[i] = new Machine();
+        _machines = Enumerable.Range(0, machinesCount)
+                      .Select(_ => new MachineService())
+                      .ToArray();
+        // example params; можна зробити динамічними
+        _serviceTimes = new int[machinesCount];
+        _serviceDeviations = new int[machinesCount];
+        for (int i = 0; i < machinesCount; i++) { _serviceTimes[i] = 10; _serviceDeviations[i] = 2; }
+        _transportTimes = new int[machinesCount-1];
+        _transportDeviations = new int[machinesCount-1];
+        for (int i = 0; i < machinesCount-1; i++) { _transportTimes[i] = 2; _transportDeviations[i] =1; }
     }
 
-    public void Start(BlockingCollection<Product> inputQueue, TimeSpan shiftDuration, CancellationToken token)
+    public void Start(
+        BlockingCollection<Microchip> myQueue,
+        BlockingCollection<(int, Microchip)> completedQueue,
+        int lineIndex,
+        TimeSpan shiftDuration,
+        CancellationToken token)
     {
-        var endTime = DateTime.UtcNow + shiftDuration;
-
-        while ((DateTime.UtcNow < endTime || !inputQueue.IsCompleted) 
+        var end = DateTime.UtcNow + shiftDuration;
+        while ((DateTime.UtcNow < end || !myQueue.IsCompleted)
                && !token.IsCancellationRequested)
         {
-            if (inputQueue.TryTake(out var product, 100))
-                ProcessProduct(product, token);
+            if (myQueue.TryTake(out var chip, 100, token))
+            {
+                ProcessProduct(chip, lineIndex, completedQueue, token);
+            }
         }
     }
 
-    private void ProcessProduct(Product product, CancellationToken token)
+    private void ProcessProduct(
+        Microchip chip,
+        int lineIndex,
+        BlockingCollection<(int, Microchip)> completedQueue,
+        CancellationToken token)
     {
-        for (var i = 0; i < _machines.Length && !token.IsCancellationRequested; i++)
+        for (int m = 0; m < _machines.Length && !token.IsCancellationRequested; m++)
         {
-            _machines[i].Enqueue(product, i);
-            _machines[i].ProcessNext(SampleServiceTime(i), i);
+            _machines[m].Enqueue(chip, m);
+            _machines[m].ProcessNext(SampleServiceTime(m), m);
 
-            if (i < _machines.Length - 1)
-                Thread.Sleep(TimeSpan.FromSeconds(SampleTransportTime(i)));
+            if (m < _machines.Length - 1)
+                Thread.Sleep(TimeSpan.FromSeconds(SampleTransportTime(m)));
         }
+        completedQueue.Add((lineIndex, chip)); 
     }
 
     private int SampleServiceTime(int idx)
-    {
-        return _rnd.Next(
-            _serviceTimes[idx] - _serviceDeviations[idx],
-            _serviceTimes[idx] + _serviceDeviations[idx] + 1);
-    }
+        => _rnd.Next(_serviceTimes[idx] - _serviceDeviations[idx],
+                    _serviceTimes[idx] + _serviceDeviations[idx] + 1);
 
     private int SampleTransportTime(int idx)
-    {
-        return _rnd.Next(
-            _transportTimes[idx] - _transportDeviations[idx],
-            _transportTimes[idx] + _transportDeviations[idx] + 1);
-    }
+        => _rnd.Next(_transportTimes[idx] - _transportDeviations[idx],
+                    _transportTimes[idx] + _transportDeviations[idx] + 1);
 
     public LineStatistics CollectStatistics(int lineNumber, TimeSpan shiftDuration)
-    {
-        return new LineStatistics
+        => new LineStatistics
         {
             LineNumber = lineNumber,
-            MachineStats = _machines
-                .Select((m, idx) => new MachineStatistics
-                {
-                    MachineIndex      = idx + 1,
-                    Utilization       = m.Utilization(shiftDuration),
-                    AverageQueueTime  = m.AverageQueueTime(),
-                    AverageServiceTime= m.AverageServiceTime(),
-                    MaxQueueLength    = m.MaxQueueLength,
-                    ProcessedProducts = m.ProcessedCount
-                })
-                .ToList()
+            MachineStats = _machines.Select((m,i) => new MachineStatistics
+            {
+                MachineIndex        = i + 1,
+                Utilization         = m.Utilization(shiftDuration),
+                AverageQueueTime    = m.AverageQueueTime(),
+                AverageServiceTime  = m.AverageServiceTime(),
+                MaxQueueLength      = m.MaxQueueLength,
+                ProcessedProducts   = m.ProcessedCount
+            }).ToList()
         };
-    }
 }

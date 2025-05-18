@@ -1,12 +1,17 @@
+using ManufacturingChips.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using ManufacturingChips.Models;
-using ManufacturingChips.Services;
 
 namespace ManufacturingChips.Controllers;
 
 public class SimulationController : Controller
 {
-    private static readonly SimulationService _sim = new();
+    private readonly ISimulationService _sim;
+
+    public SimulationController(ISimulationService sim)
+    {
+        _sim = sim;
+    }
 
     [HttpGet]
     public IActionResult Index(
@@ -48,10 +53,4 @@ public class SimulationController : Controller
     {
         return Json(_sim.GetStats());
     }
-
-    [HttpGet]
-    public JsonResult GetArrivals() => Json(_sim.GetArrivals());
-
-    [HttpGet]
-    public JsonResult GetCompletions() => Json(_sim.GetCompletions());
 }

@@ -49,10 +49,10 @@ public class SimulationController : Controller
         return Json(_sim.GetStats());
     }
 
-    [HttpPost]
-    public JsonResult EnqueueNext()
+    [HttpGet]
+    public JsonResult GetArrivals()
     {
-        int lineIdx = _sim.EnqueueNext();
-        return Json(new { lineIndex = lineIdx });
+        var list = _sim.GetArrivals();
+        return Json(list);
     }
 }

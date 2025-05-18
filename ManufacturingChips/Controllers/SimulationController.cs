@@ -6,7 +6,7 @@ namespace ManufacturingChips.Controllers;
 
 public class SimulationController : Controller
 {
-    private static readonly SimulationService _sim = new SimulationService();
+    private static readonly SimulationService _sim = new();
 
     [HttpGet]
     public IActionResult Index(
@@ -50,9 +50,8 @@ public class SimulationController : Controller
     }
 
     [HttpGet]
-    public JsonResult GetArrivals()
-    {
-        var list = _sim.GetArrivals();
-        return Json(list);
-    }
+    public JsonResult GetArrivals() => Json(_sim.GetArrivals());
+
+    [HttpGet]
+    public JsonResult GetCompletions() => Json(_sim.GetCompletions());
 }

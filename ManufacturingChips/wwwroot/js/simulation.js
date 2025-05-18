@@ -1,3 +1,5 @@
+// wwwroot/js/simulation.js
+
 let pollInterval = null;
 let timerInterval = null;
 let shiftEndTime = null;
@@ -57,8 +59,11 @@ function renderStats(data) {
     div.innerHTML = html;
 }
 
-// анімація одного продукту
+// Анімація одного продукту через всі машини на лінії
 async function animateProduct(lineElem, idx) {
+    // якщо зупинено або зміна закінчилась — не анімуємо
+    if (spawnStop) return;
+
     const queueBox = lineElem.querySelector(".queue");
     const queueCount = queueBox.querySelector(".queue-count");
     const machines = [...lineElem.querySelectorAll(".machine")];
@@ -69,14 +74,13 @@ async function animateProduct(lineElem, idx) {
     });
     const finishX = lineElem.clientWidth - 20;
 
-    // enqueue в UI
+    // enqueue (відображаємо в UI)
     const chip = document.createElement("div");
     chip.className = "chip";
     queueBox.appendChild(chip);
     queueCount.textContent = queueBox.querySelectorAll('.chip').length;
     logEvent(`Лінія ${idx+1}: деталь у чергу`);
 
-    // product
     const product = document.createElement("div");
     product.className = "product";
     const startX = queueBox.offsetLeft + queueBox.offsetWidth + 10;
@@ -85,11 +89,13 @@ async function animateProduct(lineElem, idx) {
 
     for (let m = 0; m < machines.length; m++) {
         const machineCount = machines[m].querySelector('.machine-count');
+
         // рух
         product.style.transition = `left 0.5s ease-in-out`;
         product.style.left = centers[m] + "px";
         await new Promise(r => setTimeout(r, 500));
 
+        // dequeued
         if (m === 0) {
             queueBox.removeChild(chip);
             queueCount.textContent = queueBox.querySelectorAll('.chip').length;
@@ -98,10 +104,10 @@ async function animateProduct(lineElem, idx) {
 
         // сервіс
         const srvParams = [
-            { mean: 3, dev: 0.25 },
-            { mean: 3.75, dev: 0.75 },
-            { mean: 1.75, dev: 0.5 },
-            { mean: 2, dev: 0.75 }
+            { mean: 12/2, dev: 1/2 },
+            { mean: 13/2, dev: 3/2 },
+            { mean: 7/2,  dev: 1/2 },
+            { mean: 8/2,  dev: 3/2 }
         ][m];
         const srv = nextUniform(srvParams.mean, srvParams.dev) * 1000;
         machineCount.textContent = +machineCount.textContent + 1;
@@ -112,9 +118,9 @@ async function animateProduct(lineElem, idx) {
         // передача
         if (m < machines.length - 1) {
             const trParams = [
-                { mean: 0.5, dev: 0.25 },
-                { mean: 0.25, dev: 0.25 },
-                { mean: 0.75, dev: 0.25 }
+                { mean: 2/2, dev: 1/2 },
+                { mean: 1/2, dev: 1/2 },
+                { mean: 3/2, dev: 1/2 }
             ][m];
             const tr = nextUniform(trParams.mean, trParams.dev) * 1000;
             logEvent(`Лінія ${idx+1}, M${m+1}->M${m+2}: передача ${(tr/1000).toFixed(2)}с`);
@@ -130,11 +136,13 @@ async function animateProduct(lineElem, idx) {
     logEvent(`Лінія ${idx+1}: завершено`);
 }
 
-// Новий startAnimation — опитує бекенд усі arrival події
+// Новий startAnimation — polling arrival подій від бекенда
 function startAnimation() {
     spawnStop = false;
+
     async function pollArrivals() {
         if (spawnStop) return;
+        // Отримати всі нові arrivals
         const resp = await fetch('/Simulation/GetArrivals');
         const arrivals = await resp.json();  // масив індексів ліній
         const lines = document.querySelectorAll('.line');
@@ -143,19 +151,23 @@ function startAnimation() {
                 animateProduct(lines[idx], idx);
             }
         });
+        // повторити запит через 200 мс
         setTimeout(pollArrivals, 200);
     }
+
     pollArrivals();
 }
 
-// stop & fetch stats
+// Зупинка та отримання статистики
 async function stopAndFetch() {
     spawnStop = true;
     clearInterval(timerInterval);
     clearInterval(pollInterval);
     document.getElementById("stopBtn").disabled = true;
     document.getElementById("startBtn").disabled = false;
+
     await fetch('/Simulation/Stop', { method: 'POST' });
+    // Чекаємо, поки бекенд завершить
     const check = setInterval(async () => {
         const running = await fetch('/Simulation/IsRunning').then(r => r.json());
         if (!running) {
@@ -171,9 +183,9 @@ function updateTimer() {
         document.getElementById("timeDisplay").textContent = "00:00";
         stopAndFetch();
     } else {
-        const secs = Math.floor(msLeft/1000);
-        const m = String(Math.floor(secs/60)).padStart(2,'0');
-        const s = String(secs%60).padStart(2,'0');
+        const secs = Math.floor(msLeft / 1000);
+        const m = String(Math.floor(secs / 60)).padStart(2, '0');
+        const s = String(secs % 60).padStart(2, '0');
         document.getElementById("timeDisplay").textContent = `${m}:${s}`;
     }
 }
@@ -190,7 +202,7 @@ async function fetchStats() {
     renderStats(data);
 }
 
-// Apply налаштувань
+// Обробники кнопок
 document.getElementById("applyBtn").addEventListener("click", async () => {
     const form = document.getElementById("simForm");
     const lines = +form.elements["LinesCount"].value;
@@ -203,7 +215,6 @@ document.getElementById("applyBtn").addEventListener("click", async () => {
     document.getElementById("animation").replaceWith(newAnim);
 });
 
-// Start
 document.getElementById("startBtn").addEventListener("click", async () => {
     const form = document.getElementById("simForm");
     const payload = {
@@ -228,5 +239,4 @@ document.getElementById("startBtn").addEventListener("click", async () => {
     startPolling();
 });
 
-// Manual stop
 document.getElementById("stopBtn").addEventListener("click", stopAndFetch);

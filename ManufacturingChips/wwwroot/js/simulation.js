@@ -1,5 +1,3 @@
-// wwwroot/js/simulation.js
-
 let pollInterval = null;
 let timerInterval = null;
 let shiftEndTime = null;
@@ -25,9 +23,16 @@ function renderStats(data) {
         div.innerHTML = "<p>Дані статистики відсутні.</p>";
         return;
     }
-    let html = `<p><strong>Загальна кількість деталей:</strong> ${data.total}</p>`;
+
+    let html = "";
+    html += `<p><strong>Загалом надійшло деталей:</strong> ${data.totalArrived}</p>`;
+    html += `<p><strong>Загалом завершено виробів:</strong> ${data.totalProcessed}</p>`;
+    html += `<p><strong>Залишилося необроблених:</strong> ${data.totalUnprocessed}</p>`;
+
     data.stats.forEach(line => {
         html += `<h3>Лінія ${line.lineNumber}</h3>`;
+        html += `<p>Завершено повністю: <strong>${line.completedCount}</strong></p>`;
+        html += `<p>У черзі: <strong>${line.inQueueCount}</strong>, В роботі: <strong>${line.inServiceCount}</strong></p>`;
         html += `<table class="table table-bordered">
 <thead><tr>
   <th>Машина</th>
@@ -35,7 +40,7 @@ function renderStats(data) {
   <th>Серед. час у черзі (с)</th>
   <th>Макс. довж. черги</th>
   <th>Сер. час обслуги (с)</th>
-  <th>Оброблено</th>
+  <th>Оброблено машиною</th>
 </tr></thead><tbody>`;
         line.machineStats.forEach(m => {
             html += `<tr>
@@ -44,7 +49,7 @@ function renderStats(data) {
   <td>${m.averageQueueTime.toFixed(2)}</td>
   <td>${m.maxQueueLength}</td>
   <td>${m.averageServiceTime.toFixed(2)}</td>
-  <td>${m.processedProducts}</td>
+  <td>${m.processedCount}</td>
 </tr>`;
         });
         html += `</tbody></table>`;
@@ -60,18 +65,17 @@ async function animateProduct(lineElem, idx) {
     const rect = lineElem.getBoundingClientRect();
     const centers = machines.map(m => {
         const r = m.getBoundingClientRect();
-        return r.left + r.width/2 - rect.left;
+        return r.left + r.width / 2 - rect.left;
     });
     const finishX = lineElem.clientWidth - 20;
 
-    // enqueue
+    // enqueue (відображаємо лише в UI, справжню enqueue робить бекенд)
     const chip = document.createElement("div");
     chip.className = "chip";
     queueBox.appendChild(chip);
     queueCount.textContent = queueBox.querySelectorAll('.chip').length;
     logEvent(`Лінія ${idx+1}: деталь у чергу`);
 
-    // продукт
     const product = document.createElement("div");
     product.className = "product";
     const startX = queueBox.offsetLeft + queueBox.offsetWidth + 10;
@@ -87,40 +91,39 @@ async function animateProduct(lineElem, idx) {
         product.style.left = centers[m] + "px";
         await new Promise(res => setTimeout(res, 500));
 
-        // dequeue
+        // dequeued (тільки для анімації)
         if (m === 0) {
             queueBox.removeChild(chip);
             queueCount.textContent = queueBox.querySelectorAll('.chip').length;
             logEvent(`Лінія ${idx+1}: вийшла з черги`);
         }
 
-        // сервіс
+        // сервіс (взято з тих самих параметрів, що і бекенд)
         const srvParams = [
-            { mean:12, dev:1 },
-            { mean:13, dev:3 },
-            { mean:7,  dev:1 },
-            { mean:8,  dev:3 }
-        ][m] || { mean:8, dev:3 };
+            { mean: 12/2, dev: 1/2 },
+            { mean: 13/2, dev: 3/2 },
+            { mean: 7/2,  dev: 1/2 },
+            { mean: 8/2,  dev: 3/2 }
+        ][m];
         const srv = nextUniform(srvParams.mean, srvParams.dev) * 1000;
         machineCount.textContent = parseInt(machineCount.textContent) + 1;
         logEvent(`Лінія ${idx+1}, M${m+1}: обслуговування ${(srv/1000).toFixed(2)}с`);
         await new Promise(res => setTimeout(res, srv));
         machineCount.textContent = parseInt(machineCount.textContent) - 1;
 
-        // передача
+        // передача між машинами
         if (m < machines.length - 1) {
             const trParams = [
-                { mean:2, dev:1 },
-                { mean:1, dev:1 },
-                { mean:3, dev:1 }
-            ][m] || { mean:1, dev:1 };
+                { mean: 2/2, dev: 1/2 },
+                { mean: 1/2, dev: 1/2 },
+                { mean: 3/2, dev: 1/2 }
+            ][m];
             const tr = nextUniform(trParams.mean, trParams.dev) * 1000;
             logEvent(`Лінія ${idx+1}, M${m+1}->M${m+2}: передача ${(tr/1000).toFixed(2)}с`);
             await new Promise(res => setTimeout(res, tr));
         }
     }
 
-    // фінал
     product.style.transition = `left 0.5s ease-in-out`;
     product.style.left = finishX + "px";
     await new Promise(res => setTimeout(res, 500));
@@ -128,20 +131,39 @@ async function animateProduct(lineElem, idx) {
     logEvent(`Лінія ${idx+1}: завершено`);
 }
 
-// Запуск спавна
+// Новий startAnimation(): кожен “arrival” запитує бекенд, щоб дізнатися, у яку лінію enqueue
 function startAnimation() {
     spawnStop = false;
-    document.querySelectorAll(".line").forEach((lineElem, idx) => {
-        async function spawn() {
-            if (spawnStop) return;
-            const delay = nextUniform(10, 2) * 1000;
-            await new Promise(res => setTimeout(res, delay));
-            if (spawnStop) return;
-            animateProduct(lineElem, idx);
-            spawn();
+
+    async function spawnFromServer() {
+        if (spawnStop) return;
+
+        // 1) Запитуємо бекенд: /Simulation/EnqueueNext (POST)
+        const resp = await fetch('/Simulation/EnqueueNext', { method: 'POST' });
+        const data = await resp.json();
+        const lineIdx = data.lineIndex;
+
+        // Якщо бекенд уже зупинений, виходимо
+        if (lineIdx < 0) {
+            return;
         }
-        spawn();
-    });
+
+        // 2) Коли прийшов індекс лінії, малюємо анімацію
+        const lines = document.querySelectorAll('.line');
+        if (lineIdx >= 0 && lineIdx < lines.length) {
+            animateProduct(lines[lineIdx], lineIdx);
+        }
+
+        // 3) Чекаємо той самий інтервал, що й бекенд (10/2 ± 2/2) сек
+        const delay = nextUniform(10/2, 2/2) * 1000;
+        await new Promise(res => setTimeout(res, delay));
+
+        if (!spawnStop) {
+            spawnFromServer();
+        }
+    }
+
+    spawnFromServer();
 }
 
 // Зупинка і отримання статистики
@@ -152,10 +174,9 @@ async function stopAndFetch() {
     document.getElementById("stopBtn").disabled = true;
     document.getElementById("startBtn").disabled = false;
 
-    // відправляємо stop на сервер, чекаємо завершення
     await fetch('/Simulation/Stop', { method: 'POST' });
     const check = setInterval(async () => {
-        const running = await fetch('/Simulation/IsRunning').then(r=>r.json());
+        const running = await fetch('/Simulation/IsRunning').then(r => r.json());
         if (!running) {
             clearInterval(check);
             fetchStats();
@@ -167,12 +188,11 @@ function updateTimer() {
     const msLeft = shiftEndTime - Date.now();
     if (msLeft <= 0) {
         document.getElementById("timeDisplay").textContent = "00:00";
-        // одразу зупиняємо симуляцію
         stopAndFetch();
     } else {
-        const secs = Math.floor(msLeft/1000);
-        const m = String(Math.floor(secs/60)).padStart(2,'0');
-        const s = String(secs%60).padStart(2,'0');
+        const secs = Math.floor(msLeft / 1000);
+        const m = String(Math.floor(secs / 60)).padStart(2, '0');
+        const s = String(secs % 60).padStart(2, '0');
         document.getElementById("timeDisplay").textContent = `${m}:${s}`;
     }
 }

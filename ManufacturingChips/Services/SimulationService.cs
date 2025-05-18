@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using ManufacturingChips.Models;
 
 namespace ManufacturingChips.Services;
@@ -6,46 +7,76 @@ namespace ManufacturingChips.Services;
 public class SimulationService
 {
     private CancellationTokenSource _cts;
-    private Task _simulationTask;
-    private readonly object _lock = new();
+    private Task _arrivalTask;
+    private List<Task> _lineTasks;
+    private BlockingCollection<Microchip>[] _queues;
+    private MachineStatistics[][] _stats;
 
-    private int _lines, _machinesPerLine;
-    private List<LineStatistics> _lineStats;
+    private int _totalArrived;
+    private int[] _completedCount;
+    private int[] _inServiceCount;
+    private readonly Random _rnd = new Random();
 
+    public int LinesCount { get; private set; }
+    public int MachinesPerLine { get; private set; }
+    public int ShiftDurationSeconds { get; private set; }
     public bool IsRunning { get; private set; }
 
-    // Параметри (в секундах)
-    private readonly double arrivalMean = 10, arrivalDev = 2;
-    private readonly double[] serviceMean = { 12, 13, 7, 8 };
-    private readonly double[] serviceDev = { 1, 3, 1, 3 };
-    private readonly double[] transferMean = { 2, 1, 3 };
-    private readonly double[] transferDev = { 1, 1, 1 };
-
-    private double NextUniform(double mean, double dev, Random rnd)
-        => mean - dev + rnd.NextDouble() * (2 * dev);
-
-    public void Start(int lines, int machinesPerLine, int durationSeconds)
+    public void Start(int linesCount, int machinesPerLine, int shiftDurationSeconds)
     {
         if (IsRunning) return;
+        LinesCount = linesCount;
+        MachinesPerLine = machinesPerLine;
+        ShiftDurationSeconds = shiftDurationSeconds;
 
-        _lines = lines;
-        _machinesPerLine = machinesPerLine;
+        // Ініціалізуємо всі масиви
+        _queues = Enumerable.Range(0, LinesCount)
+            .Select(_ => new BlockingCollection<Microchip>())
+            .ToArray();
 
-        // Ініціалізація статистик
-        _lineStats = Enumerable.Range(1, _lines)
-            .Select(i => new LineStatistics
-            {
-                LineNumber = i,
-                MachineStats = Enumerable.Range(0, _machinesPerLine)
-                    .Select(m => new MachineStatistics { MachineIndex = m })
-                    .ToList()
-            }).ToList();
+        _stats = new MachineStatistics[LinesCount][];
+        _completedCount = new int[LinesCount];
+        _inServiceCount = new int[LinesCount];
+        _totalArrived = 0;
+
+        for (int i = 0; i < LinesCount; i++)
+        {
+            _stats[i] = Enumerable.Range(0, MachinesPerLine)
+                .Select(m => new MachineStatistics {
+                    MachineIndex     = m,
+                    Utilization      = 0,
+                    AverageQueueTime = 0,
+                    MaxQueueLength   = 0,
+                    AverageServiceTime = 0,
+                    ProcessedCount   = 0
+                })
+                .ToArray();
+            _completedCount[i] = 0;
+            _inServiceCount[i] = 0;
+        }
 
         _cts = new CancellationTokenSource();
-        _cts.CancelAfter(TimeSpan.FromSeconds(durationSeconds)); // Автоматична зупинка
-
+        var token = _cts.Token;
         IsRunning = true;
-        _simulationTask = Task.Run(() => RunSimulation(_cts.Token));
+
+        // Зберігаємо стандартний arrival‐потік (якщо він ще потрібен; можна прибрати)
+        _arrivalTask = Task.Run(() => ArrivalLoop(token), token);
+
+        // Запускаємо обробку ліній
+        _lineTasks = new List<Task>();
+        for (int line = 0; line < LinesCount; line++)
+        {
+            int idx = line;
+            _lineTasks.Add(Task.Run(() => LineLoop(idx, token), token));
+        }
+
+        // Авто‐стоп через ShiftDurationSeconds
+        Task.Run(async () =>
+        {
+            try { await Task.Delay(TimeSpan.FromSeconds(ShiftDurationSeconds), token); }
+            catch { }
+            Stop();
+        }, token);
     }
 
     public void Stop()
@@ -54,88 +85,135 @@ public class SimulationService
         _cts.Cancel();
         try
         {
-            _simulationTask.Wait();
+            Task.WaitAll(_lineTasks.Concat(new[]{ _arrivalTask }).ToArray());
         }
-        catch
-        {
-        }
-
+        catch { }
         IsRunning = false;
     }
 
-    private void RunSimulation(CancellationToken token)
+    // (залишаємо ArrivalLoop, якщо хочемо мати ще й автоматичний генератор; можна не викликати його)
+    private void ArrivalLoop(CancellationToken token)
     {
-        var rnd = new Random();
-        var lineQueues = new ConcurrentDictionary<int, ConcurrentQueue<DateTime>>();
-
-        var tasks = Enumerable.Range(0, _lines).Select(lineIdx => Task.Run(async () =>
+        while (!token.IsCancellationRequested)
         {
-            while (!token.IsCancellationRequested)
+            double delaySec = NextUniform(10.0/2.0, 2.0/2.0);
+            try { Task.Delay(TimeSpan.FromSeconds(delaySec), token).Wait(token); }
+            catch { break; }
+
+            // додаємо нову деталь у випадкову лінію
+            EnqueueNext_Internal();
+        }
+    }
+
+    // Новий метод: додаємо 1 деталь і повертаємо, на яку лінію її поставили
+    public int EnqueueNext_Internal()
+    {
+        var mc = new Microchip { EnqueueTime = DateTime.UtcNow };
+        int lineIdx = _rnd.Next(LinesCount);
+
+        _queues[lineIdx].Add(mc);
+        Interlocked.Increment(ref _totalArrived);
+        return lineIdx;
+    }
+
+    // Метод, який викликає контролер
+    public int EnqueueNext()
+    {
+        // якщо симуляція вже зупинена, повернемо -1
+        if (!IsRunning) return -1;
+        return EnqueueNext_Internal();
+    }
+
+    private void LineLoop(int lineIdx, CancellationToken token)
+    {
+        var machines = _stats[lineIdx];
+        var queue = _queues[lineIdx];
+        var busyTimers = Enumerable.Range(0, MachinesPerLine)
+            .Select(_ => new Stopwatch())
+            .ToArray();
+
+        while (!token.IsCancellationRequested)
+        {
+            Microchip mc;
+            try { mc = queue.Take(token); }
+            catch { break; }
+
+            Interlocked.Increment(ref _inServiceCount[lineIdx]);
+            mc.DequeueTime = DateTime.UtcNow;
+            double queueTime = (mc.DequeueTime - mc.EnqueueTime).TotalSeconds;
+
+            for (int m = 0; m < MachinesPerLine; m++)
             {
-                // Інтервал надходження
-                await Task.Delay(TimeSpan.FromSeconds(NextUniform(arrivalMean, arrivalDev, rnd)), token);
+                var stat = machines[m];
+                stat.AverageQueueTime = (stat.AverageQueueTime * stat.ProcessedCount + queueTime)
+                                        / (stat.ProcessedCount + 1);
+                stat.MaxQueueLength = Math.Max(stat.MaxQueueLength, queue.Count);
 
-                // Черга
-                var enq = DateTime.UtcNow;
-                var q = lineQueues.GetOrAdd(lineIdx, _ => new ConcurrentQueue<DateTime>());
-                q.Enqueue(enq);
-                lock (_lock)
-                    foreach (var ms in _lineStats[lineIdx].MachineStats)
-                        ms.MaxQueueLength = Math.Max(ms.MaxQueueLength, q.Count);
+                double[] means = { 6.0, 6.5, 3.5, 4.0 };
+                double[] devs = { 0.5,  1.5, 0.5, 1.5 };
+                double serviceTime = NextUniform(means[m], devs[m]);
 
-                // Обробка
-                for (int m = 0; m < _machinesPerLine; m++)
+                busyTimers[m].Start();
+                try { Task.Delay(TimeSpan.FromSeconds(serviceTime), token).Wait(token); }
+                catch
                 {
-                    if (q.TryDequeue(out var t0))
-                    {
-                        var qt = (DateTime.UtcNow - t0).TotalSeconds;
-                        lock (_lock) _lineStats[lineIdx].MachineStats[m].AverageQueueTime += qt;
-                    }
+                    busyTimers[m].Stop();
+                    Interlocked.Decrement(ref _inServiceCount[lineIdx]);
+                    goto AfterProcessing;
+                }
+                busyTimers[m].Stop();
 
-                    var srv = NextUniform(serviceMean[Math.Min(m, serviceMean.Length - 1)],
-                        serviceDev[Math.Min(m, serviceDev.Length - 1)], rnd);
-                    lock (_lock)
-                    {
-                        var ms = _lineStats[lineIdx].MachineStats[m];
-                        ms.AverageServiceTime += srv;
-                        ms.ProcessedProducts++;
-                        ms.Utilization += srv;
-                    }
+                stat.AverageServiceTime = (stat.AverageServiceTime * stat.ProcessedCount + serviceTime)
+                                          / (stat.ProcessedCount + 1);
+                stat.ProcessedCount++;
 
-                    await Task.Delay(TimeSpan.FromSeconds(srv), token);
-
-                    // Передача
-                    if (m < _machinesPerLine - 1 && m < transferMean.Length)
+                if (m < MachinesPerLine - 1)
+                {
+                    double[] tMeans = { 1.0, 0.5, 1.5 };
+                    double[] tDevs  = { 0.5, 0.5, 0.5 };
+                    double transferTime = NextUniform(tMeans[m], tDevs[m]);
+                    try { Task.Delay(TimeSpan.FromSeconds(transferTime), token).Wait(token); }
+                    catch
                     {
-                        var tr = NextUniform(transferMean[m], transferDev[m], rnd);
-                        await Task.Delay(TimeSpan.FromSeconds(tr), token);
+                        Interlocked.Decrement(ref _inServiceCount[lineIdx]);
+                        goto AfterProcessing;
                     }
                 }
             }
-        }, token)).ToArray();
 
-        Task.WaitAll(tasks);
+            Interlocked.Increment(ref _completedCount[lineIdx]);
+            Interlocked.Decrement(ref _inServiceCount[lineIdx]);
 
-        // Фіналізація статистики
-        lock (_lock)
-        {
-            foreach (var line in _lineStats)
-            foreach (var ms in line.MachineStats)
-                if (ms.ProcessedProducts > 0)
-                {
-                    var p = ms.ProcessedProducts;
-                    ms.AverageQueueTime /= p;
-                    ms.AverageServiceTime /= p;
-                    ms.Utilization /= _cts.Token.CanBeCanceled ? p : 1; // нормалізація
-                }
+            AfterProcessing:
+            ;
         }
 
-        IsRunning = false;
+        for (int m = 0; m < MachinesPerLine; m++)
+            machines[m].Utilization = busyTimers[m].Elapsed.TotalSeconds / ShiftDurationSeconds;
     }
+
+    private double NextUniform(double mean, double dev)
+        => mean - dev + _rnd.NextDouble() * (2 * dev);
 
     public SimulationStatsResponse GetStats()
     {
-        var total = _lineStats.Sum(l => l.MachineStats.Sum(m => m.ProcessedProducts));
-        return new SimulationStatsResponse { Total = total, Stats = _lineStats };
+        int totalCompleted   = _completedCount.Sum();
+        int totalInQueues    = _queues.Sum(q => q.Count);
+        int totalInService   = _inServiceCount.Sum();
+        int totalUnprocessed = totalInQueues + totalInService;
+
+        return new SimulationStatsResponse
+        {
+            TotalArrived     = _totalArrived,
+            TotalProcessed   = totalCompleted,
+            TotalUnprocessed = totalUnprocessed,
+            Stats = Enumerable.Range(0, LinesCount).Select(idx => new LineStatistics {
+                LineNumber     = idx + 1,
+                CompletedCount = _completedCount[idx],
+                InQueueCount   = _queues[idx].Count,
+                InServiceCount = _inServiceCount[idx],
+                MachineStats   = _stats[idx].ToList()
+            }).ToList()
+        };
     }
 }

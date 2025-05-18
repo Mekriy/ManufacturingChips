@@ -1,8 +1,8 @@
 namespace ManufacturingChips.Models;
-public class Microchip
+
+public class EnqueueResult
 {
-    public DateTime EnqueueTime { get; set; }
-    public DateTime DequeueTime { get; set; }
+    public int LineIndex { get; set; }
     public double[] ServiceTimes { get; set; }
     public double[] TransferTimes { get; set; }
 }

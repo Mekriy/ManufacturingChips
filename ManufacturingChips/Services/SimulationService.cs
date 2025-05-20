@@ -12,16 +12,14 @@ public class SimulationService : ISimulationService
     private readonly IHubContext<SimulationHub> _hub;
     private CancellationTokenSource _cts;
     private Task _arrivalTask;
-    private List<Task> _lineTasks;
+    private List<Task> _machineTasks;
 
-    private BlockingCollection<Microchip>[] _serviceQueues;
-    private Queue<Microchip>[] _pendingQueues;
-    private object[] _lineLocks;
+    // Now: one queue per machine, per line
+    private BlockingCollection<Microchip>[][] _serviceQueues;
 
     private MachineStatistics[][] _stats;
-    private int[] _inServiceCount;
-    private int[] _completedCount;
-    private bool[] _firstMachineBusy;
+    private int[] _inServiceCount;    // number of chips currently in‐service (i.e., between machine 0 start and last machine completion) per line
+    private int[] _completedCount;    // number of chips fully processed per line
     private int _totalArrived;
     private readonly Random _rnd = new();
 
@@ -43,23 +41,23 @@ public class SimulationService : ISimulationService
         MachinesPerLine = machinesPerLine;
         ShiftDurationSeconds = shiftDurationSeconds;
 
-        // Initialize per-line structures
-        _serviceQueues = new BlockingCollection<Microchip>[LinesCount];
-        _pendingQueues = new Queue<Microchip>[LinesCount];
-        _lineLocks = new object[LinesCount];
+        // Initialize per‐line, per‐machine structures
+        _serviceQueues = new BlockingCollection<Microchip>[LinesCount][];
         _stats = new MachineStatistics[LinesCount][];
         _inServiceCount = new int[LinesCount];
         _completedCount = new int[LinesCount];
-        _firstMachineBusy = new bool[LinesCount];
         _totalArrived = 0;
 
         for (int i = 0; i < LinesCount; i++)
         {
-            _serviceQueues[i] = new BlockingCollection<Microchip>();
-            _pendingQueues[i] = new Queue<Microchip>();
-            _lineLocks[i] = new object();
-            _stats[i] = Enumerable.Range(0, MachinesPerLine)
-                .Select(m => new MachineStatistics
+            // Create one BlockingCollection per machine on this line
+            _serviceQueues[i] = new BlockingCollection<Microchip>[MachinesPerLine];
+            _stats[i] = new MachineStatistics[MachinesPerLine];
+
+            for (int m = 0; m < MachinesPerLine; m++)
+            {
+                _serviceQueues[i][m] = new BlockingCollection<Microchip>();
+                _stats[i][m] = new MachineStatistics
                 {
                     MachineIndex = m,
                     Utilization = 0,
@@ -67,7 +65,8 @@ public class SimulationService : ISimulationService
                     MaxQueueLength = 0,
                     AverageServiceTime = 0,
                     ProcessedCount = 0
-                }).ToArray();
+                };
+            }
         }
 
         _cts = new CancellationTokenSource();
@@ -77,12 +76,20 @@ public class SimulationService : ISimulationService
         // Start arrival generator
         _arrivalTask = Task.Run(() => ArrivalLoop(token), token);
 
-        // Start line processors
-        _lineTasks = Enumerable.Range(0, LinesCount)
-            .Select(idx => Task.Run(() => LineLoop(idx, token), token))
-            .ToList();
+        // Start a MachineLoop task for each line and each machine
+        _machineTasks = new List<Task>();
+        for (int lineIdx = 0; lineIdx < LinesCount; lineIdx++)
+        {
+            for (int machineIdx = 0; machineIdx < MachinesPerLine; machineIdx++)
+            {
+                int capturedLine = lineIdx;
+                int capturedMachine = machineIdx;
+                var task = Task.Run(() => MachineLoop(capturedLine, capturedMachine, token), token);
+                _machineTasks.Add(task);
+            }
+        }
 
-        // Auto-stop after shift duration
+        // Auto‐stop after shift duration
         Task.Run(async () =>
         {
             try { await Task.Delay(ShiftDurationSeconds * 1000, token); }
@@ -97,7 +104,7 @@ public class SimulationService : ISimulationService
         _cts.Cancel();
         try
         {
-            Task.WaitAll(new[] { _arrivalTask }.Concat(_lineTasks).ToArray());
+            Task.WaitAll(new[] { _arrivalTask }.Concat(_machineTasks).ToArray());
         }
         catch { }
         IsRunning = false;
@@ -118,33 +125,95 @@ public class SimulationService : ISimulationService
             };
             Interlocked.Increment(ref _totalArrived);
 
-            // Round-robin assignment (or other policy)
+            // Round‐robin assignment (or other policy)
             int lineIdx = _totalArrived % LinesCount;
-            EnqueueOrDispatch(mc, lineIdx);
+
+            // Dispatch directly into machine 0's queue
+            mc.Timings = GenerateTimings();
+            _serviceQueues[lineIdx][0].Add(mc);
+            _hub.Clients.All.SendAsync("OnQueueToService", new { lineIdx, chipId = mc.ChipId });
         }
     }
 
-    private void EnqueueOrDispatch(Microchip mc, int lineIdx)
+    private async Task MachineLoop(int lineIdx, int machineIdx, CancellationToken token)
     {
-        lock (_lineLocks[lineIdx])
+        var queue = _serviceQueues[lineIdx][machineIdx];
+        var busy = new Stopwatch();
+
+        while (!token.IsCancellationRequested)
         {
-            if (!_firstMachineBusy[lineIdx] && _serviceQueues[lineIdx].Count == 0)
+            Microchip mc;
+            try { mc = queue.Take(token); }
+            catch { break; }
+
+            // Compute queue time for THIS machine
+            mc.DequeueTime = DateTime.UtcNow;
+            double qTime = (mc.DequeueTime - mc.EnqueueTime).TotalSeconds;
+
+            // If this is machine 0, that marks chip entering the line
+            if (machineIdx == 0)
             {
-                DispatchToService(mc, lineIdx);
+                Interlocked.Increment(ref _inServiceCount[lineIdx]);
+            }
+
+            // Update stats before service
+            var st = _stats[lineIdx][machineIdx];
+            st.AverageQueueTime = (st.AverageQueueTime * st.ProcessedCount + qTime)
+                                  / (st.ProcessedCount + 1);
+            st.MaxQueueLength = Math.Max(st.MaxQueueLength, queue.Count);
+
+            // Perform service
+            var tp = mc.Timings[machineIdx];
+            busy.Start();
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(tp.Service), token);
+            }
+            finally
+            {
+                busy.Stop();
+            }
+
+            // Update service stats
+            st.AverageServiceTime = (st.AverageServiceTime * st.ProcessedCount + tp.Service)
+                                    / (st.ProcessedCount + 1);
+            st.ProcessedCount++;
+
+            // Perform transfer to next machine (or finish)
+            if (machineIdx < MachinesPerLine - 1)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(tp.Transfer), token);
+
+                // Enqueue into next machine's queue
+                mc.EnqueueTime = DateTime.UtcNow;
+                _serviceQueues[lineIdx][machineIdx + 1].Add(mc);
+
+                // Notify UI about transfer
+                await _hub.Clients.All.SendAsync("OnMachineTransfer", new
+                {
+                    lineIdx,
+                    chipId = mc.ChipId,
+                    fromMachine = machineIdx,
+                    toMachine = machineIdx + 1
+                });
             }
             else
             {
-                _pendingQueues[lineIdx].Enqueue(mc);
-                _hub.Clients.All.SendAsync("OnArrival", new { lineIdx, chipId = mc.ChipId });
+                // Last machine: chip is completed
+                Interlocked.Increment(ref _completedCount[lineIdx]);
+                Interlocked.Decrement(ref _inServiceCount[lineIdx]);
+                await _hub.Clients.All.SendAsync("OnCompletion", new
+                {
+                    lineIdx,
+                    chipId = mc.ChipId,
+                    fromMachine = machineIdx,
+                    toMachine = machineIdx
+                });
             }
         }
-    }
 
-    private void DispatchToService(Microchip mc, int lineIdx)
-    {
-        mc.Timings = GenerateTimings();
-        _serviceQueues[lineIdx].Add(mc);
-        _hub.Clients.All.SendAsync("OnQueueToService", new { lineIdx, chipId = mc.ChipId });
+        // Compute utilization after stop
+        _stats[lineIdx][machineIdx].Utilization = busy.Elapsed.TotalSeconds / ShiftDurationSeconds;
     }
 
     private List<TimePair> GenerateTimings()
@@ -167,89 +236,22 @@ public class SimulationService : ISimulationService
         return timings;
     }
 
-    private async Task LineLoop(int lineIdx, CancellationToken token)
-    {
-        var queue = _serviceQueues[lineIdx];
-        var busy = Enumerable.Range(0, MachinesPerLine)
-            .Select(_ => new Stopwatch()).ToArray();
-
-        while (!token.IsCancellationRequested)
-        {
-            Microchip mc;
-            try { mc = queue.Take(token); }
-            catch { break; }
-
-            mc.DequeueTime = DateTime.UtcNow;
-            double qTime = (mc.DequeueTime - mc.EnqueueTime).TotalSeconds;
-
-            try
-            {
-                _firstMachineBusy[lineIdx] = true;
-                Interlocked.Increment(ref _inServiceCount[lineIdx]);
-
-                for (int m = 0; m < MachinesPerLine; m++)
-                {
-                    var st = _stats[lineIdx][m];
-                    st.AverageQueueTime = (st.AverageQueueTime * st.ProcessedCount + qTime)
-                                          / (st.ProcessedCount + 1);
-                    st.MaxQueueLength = Math.Max(st.MaxQueueLength, queue.Count);
-
-                    var tp = mc.Timings[m];
-                    busy[m].Start();
-                    await Task.Delay(TimeSpan.FromSeconds(tp.Service), token);
-                    busy[m].Stop();
-
-                    st.AverageServiceTime = (st.AverageServiceTime * st.ProcessedCount + tp.Service)
-                                            / (st.ProcessedCount + 1);
-                    st.ProcessedCount++;
-
-                    await Task.Delay(TimeSpan.FromSeconds(tp.Transfer), token);
-                    await _hub.Clients.All.SendAsync("OnMachineTransfer", new
-                    {
-                        lineIdx,
-                        chipId = mc.ChipId,
-                        fromMachine = m,
-                        toMachine = m + 1
-                    });
-                }
-
-                Interlocked.Increment(ref _completedCount[lineIdx]);
-            }
-            finally
-            {
-                _firstMachineBusy[lineIdx] = false;
-                Interlocked.Decrement(ref _inServiceCount[lineIdx]);
-
-                Microchip next = null;
-                lock (_lineLocks[lineIdx])
-                {
-                    if (_pendingQueues[lineIdx].Count > 0)
-                        next = _pendingQueues[lineIdx].Dequeue();
-                }
-                if (next != null)
-                    DispatchToService(next, lineIdx);
-            }
-        }
-
-        // compute utilization after stop
-        for (int m = 0; m < MachinesPerLine; m++)
-            _stats[lineIdx][m].Utilization = busy[m].Elapsed.TotalSeconds / ShiftDurationSeconds;
-    }
-
     private double NextUniform(double mean, double dev)
         => mean - dev + _rnd.NextDouble() * 2 * dev;
 
     public SimulationStatsResponse GetStats()
     {
         var totalProcessed = _completedCount.Sum();
-        var totalInQueue = _serviceQueues.Sum(q => q.Count);
+        var totalInQueue = _serviceQueues
+            .SelectMany(line => line)
+            .Sum(q => q.Count);
         var totalInService = _inServiceCount.Sum();
 
         var statsList = Enumerable.Range(0, LinesCount).Select(i => new LineStatistics
         {
             LineNumber = i + 1,
             CompletedCount = _completedCount[i],
-            InQueueCount = _serviceQueues[i].Count,
+            InQueueCount = _serviceQueues[i].Sum(q => q.Count),
             InServiceCount = _inServiceCount[i],
             MachineStats = _stats[i].ToList()
         }).ToList();

@@ -68,7 +68,6 @@
     transition: left 0.6s ease-in-out;
 }
 
-/* Лічильник кількості в черзі */
 .queue-count {
     position: absolute;
     top: -8px;
@@ -85,7 +84,6 @@
     justify-content: center;
 }
 
-/* Лічильник зайнятості машини */
 .machine-count {
     position: absolute;
     bottom: -8px;

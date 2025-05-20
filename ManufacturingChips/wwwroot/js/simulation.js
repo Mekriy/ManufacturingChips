@@ -1,11 +1,9 @@
 "use strict";
 
-// —————— GLOBAL STATE ——————
 let shiftTimer    = null;
 let shiftEndTime  = null;
 let spawnStop     = false;
 
-// —————— CLASS FOR LINE ANIMATION ——————
 class LineAnimator {
     constructor(lineIdx) {
         this.lineIdx = lineIdx;
@@ -33,7 +31,8 @@ class LineAnimator {
         chip.dataset.chipId = chipId;
         queueBox.appendChild(chip);
         countDom.textContent = queueBox.querySelectorAll('.chip').length;
-        logEvent(`Лінія ${this.lineIdx+1}: enqueue (chip ${chipId})`);
+
+        logEvent(`Лінія ${this.lineIdx + 1}: черга [Chip ${chipId.substring(0, 4)}]`);
     }
 
     animateQueueToService(chipId) {
@@ -45,7 +44,8 @@ class LineAnimator {
             chip.remove();
             countDom.textContent = queueBox.querySelectorAll('.chip').length;
         }
-        logEvent(`Лінія ${this.lineIdx+1}: dequeue → M1 (chip ${chipId})`);
+
+        logEvent(`Лінія ${this.lineIdx + 1}: черга -> M1 [Chip ${chipId.substring(0, 4)}]`);
 
         const product = document.createElement('div');
         product.className      = 'product';
@@ -75,15 +75,16 @@ class LineAnimator {
             product.style.opacity = '0';
             product.addEventListener('transitionend', () => {
                 if (product.parentElement) product.remove();
-                logEvent(`Лінія ${this.lineIdx+1}: completion (chip ${chipId})`);
+                logEvent(`Лінія ${this.lineIdx + 1}: завершення [Chip ${chipId.substring(0, 4)}]`);
             }, { once: true });
         } else {
-            logEvent(`Лінія ${this.lineIdx+1}: transfer ${fromMachine+1}→${toMachine+1} (chip ${chipId})`);
+            logEvent(
+                `Лінія ${this.lineIdx + 1}: перенесення M${fromMachine + 1} -> M${toMachine + 1} [Chip ${chipId.substring(0, 4)}]`
+            );
         }
     }
 }
 
-// —————— SETUP ANIMATORS ——————
 const animators = [];
 function setupAnimators() {
     animators.length = 0;
@@ -92,7 +93,6 @@ function setupAnimators() {
     });
 }
 
-// —————— TIMER & STATS (unchanged) ——————
 function logEvent(msg) {
     const ul   = document.getElementById("logList");
     const time = new Date().toLocaleTimeString();
@@ -181,7 +181,6 @@ function renderStats(data) {
     div.innerHTML = html;
 }
 
-// —————— SIGNALR DRIVEN ANIMATION ——————
 const connection = new signalR.HubConnectionBuilder()
     .withUrl("/simulationHub")
     .withAutomaticReconnect()
@@ -203,11 +202,8 @@ connection.on("OnCompletion", ev => {
     animators[ev.lineIdx].animateTransfer(ev.chipId, ev.fromMachine, ev.toMachine + 1);
 });
 
-connection.start()
-    .then(() => logEvent("SignalR: connected"))
-    .catch(err => console.error(err));
+connection.start().catch(err => console.error(err));
 
-// —————— BUTTONS & INIT ——————
 document.getElementById("applyBtn").addEventListener("click", async () => {
     const form     = document.getElementById("simForm");
     const lines    = +form.elements["LinesCount"].value;
@@ -247,5 +243,4 @@ document.getElementById("startBtn").addEventListener("click", async () => {
 
 document.getElementById("stopBtn").addEventListener("click", stopAndFetch);
 
-// Ініціалізація
 setupAnimators();

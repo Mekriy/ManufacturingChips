@@ -5,13 +5,12 @@
     {
         <div class="line" style="--mp:@Model.MachinesPerLine">
             <div class="queue" id="queue@line">
-                <div class="queue-count">0</div>
+                <div>Line #@line</div>
             </div>
             @for (int m = 0; m < Model.MachinesPerLine; m++)
             {
                 <div class="machine" data-index="@m">
                     M@(m+1)
-                    <div class="machine-count">0</div>
                 </div>
             }
         </div>

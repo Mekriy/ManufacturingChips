@@ -14,12 +14,11 @@ public class SimulationService : ISimulationService
     private Task _arrivalTask;
     private List<Task> _machineTasks;
 
-    // Now: one queue per machine, per line
     private BlockingCollection<Microchip>[][] _serviceQueues;
 
     private MachineStatistics[][] _stats;
-    private int[] _inServiceCount;    // number of chips currently in‐service (i.e., between machine 0 start and last machine completion) per line
-    private int[] _completedCount;    // number of chips fully processed per line
+    private int[] _inServiceCount;
+    private int[] _completedCount;
     private int _totalArrived;
     private readonly Random _rnd = new();
 
@@ -41,7 +40,6 @@ public class SimulationService : ISimulationService
         MachinesPerLine = machinesPerLine;
         ShiftDurationSeconds = shiftDurationSeconds;
 
-        // Initialize per‐line, per‐machine structures
         _serviceQueues = new BlockingCollection<Microchip>[LinesCount][];
         _stats = new MachineStatistics[LinesCount][];
         _inServiceCount = new int[LinesCount];
@@ -50,7 +48,6 @@ public class SimulationService : ISimulationService
 
         for (int i = 0; i < LinesCount; i++)
         {
-            // Create one BlockingCollection per machine on this line
             _serviceQueues[i] = new BlockingCollection<Microchip>[MachinesPerLine];
             _stats[i] = new MachineStatistics[MachinesPerLine];
 
@@ -73,10 +70,8 @@ public class SimulationService : ISimulationService
         var token = _cts.Token;
         IsRunning = true;
 
-        // Start arrival generator
         _arrivalTask = Task.Run(() => ArrivalLoop(token), token);
 
-        // Start a MachineLoop task for each line and each machine
         _machineTasks = new List<Task>();
         for (int lineIdx = 0; lineIdx < LinesCount; lineIdx++)
         {
@@ -89,7 +84,6 @@ public class SimulationService : ISimulationService
             }
         }
 
-        // Auto‐stop after shift duration
         Task.Run(async () =>
         {
             try { await Task.Delay(ShiftDurationSeconds * 1000, token); }
@@ -125,10 +119,8 @@ public class SimulationService : ISimulationService
             };
             Interlocked.Increment(ref _totalArrived);
 
-            // Round‐robin assignment (or other policy)
             int lineIdx = _totalArrived % LinesCount;
 
-            // Dispatch directly into machine 0's queue
             mc.Timings = GenerateTimings();
             _serviceQueues[lineIdx][0].Add(mc);
             _hub.Clients.All.SendAsync("OnQueueToService", new { lineIdx, chipId = mc.ChipId });
@@ -146,23 +138,19 @@ public class SimulationService : ISimulationService
             try { mc = queue.Take(token); }
             catch { break; }
 
-            // Compute queue time for THIS machine
             mc.DequeueTime = DateTime.UtcNow;
             double qTime = (mc.DequeueTime - mc.EnqueueTime).TotalSeconds;
 
-            // If this is machine 0, that marks chip entering the line
             if (machineIdx == 0)
             {
                 Interlocked.Increment(ref _inServiceCount[lineIdx]);
             }
 
-            // Update stats before service
             var st = _stats[lineIdx][machineIdx];
             st.AverageQueueTime = (st.AverageQueueTime * st.ProcessedCount + qTime)
                                   / (st.ProcessedCount + 1);
             st.MaxQueueLength = Math.Max(st.MaxQueueLength, queue.Count);
 
-            // Perform service
             var tp = mc.Timings[machineIdx];
             busy.Start();
             try
@@ -174,21 +162,17 @@ public class SimulationService : ISimulationService
                 busy.Stop();
             }
 
-            // Update service stats
             st.AverageServiceTime = (st.AverageServiceTime * st.ProcessedCount + tp.Service)
                                     / (st.ProcessedCount + 1);
             st.ProcessedCount++;
 
-            // Perform transfer to next machine (or finish)
             if (machineIdx < MachinesPerLine - 1)
             {
                 await Task.Delay(TimeSpan.FromSeconds(tp.Transfer), token);
 
-                // Enqueue into next machine's queue
                 mc.EnqueueTime = DateTime.UtcNow;
                 _serviceQueues[lineIdx][machineIdx + 1].Add(mc);
 
-                // Notify UI about transfer
                 await _hub.Clients.All.SendAsync("OnMachineTransfer", new
                 {
                     lineIdx,
@@ -199,7 +183,6 @@ public class SimulationService : ISimulationService
             }
             else
             {
-                // Last machine: chip is completed
                 Interlocked.Increment(ref _completedCount[lineIdx]);
                 Interlocked.Decrement(ref _inServiceCount[lineIdx]);
                 await _hub.Clients.All.SendAsync("OnCompletion", new
@@ -212,7 +195,6 @@ public class SimulationService : ISimulationService
             }
         }
 
-        // Compute utilization after stop
         _stats[lineIdx][machineIdx].Utilization = busy.Elapsed.TotalSeconds / ShiftDurationSeconds;
     }
 

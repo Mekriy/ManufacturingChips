@@ -1,42 +1,56 @@
-using System.Collections.Concurrent;
-using ManufacturingChips.Models;
+using ManufacturingChips.Interfaces;
 using Microsoft.AspNetCore.Mvc;
+using ManufacturingChips.Models;
 
 namespace ManufacturingChips.Controllers;
 
 public class SimulationController : Controller
 {
-    public IActionResult Index()
+    private readonly ISimulationService _sim;
+
+    public SimulationController(ISimulationService sim)
     {
-        return View(new SimulationParameters());
+        _sim = sim;
+    }
+
+    [HttpGet]
+    public IActionResult Index(
+        int LinesCount = 3,
+        int MachinesPerLine = 4,
+        int ShiftDurationSeconds = 120)
+    {
+        var model = new SimulationView
+        {
+            LinesCount = LinesCount,
+            MachinesPerLine = MachinesPerLine,
+            ShiftDurationSeconds = ShiftDurationSeconds
+        };
+        return View(model);
     }
 
     [HttpPost]
-    public IActionResult Run(SimulationParameters parameters)
+    public IActionResult StartSimulation([FromBody] SimulationView vm)
     {
-        var inputQueue = new BlockingCollection<Product>();
-        var rnd = new Random();
-        var shiftDuration = TimeSpan.FromMinutes(parameters.ShiftDurationMinutes);
+        _sim.Start(vm.LinesCount, vm.MachinesPerLine, vm.ShiftDurationSeconds);
+        return Ok();
+    }
 
-        var endTime = DateTime.Now + shiftDuration;
-        var generatorTask = Task.Run(() =>
-        {
-            while (DateTime.Now < endTime)
-            {
-                inputQueue.Add(new Product());
-                var delay = rnd.Next(8, 13);
-                Thread.Sleep(TimeSpan.FromMinutes(delay));
-            }
-            inputQueue.CompleteAdding();
-        });
+    [HttpPost]
+    public IActionResult Stop()
+    {
+        _sim.Stop();
+        return Ok();
+    }
 
-        var lines = new List<ProductionLine> { new(), new(), new() };
-        var lineTasks = lines.Select(line => Task.Run(() => line.Start(inputQueue, shiftDuration))).ToArray();
+    [HttpGet]
+    public JsonResult IsRunning()
+    {
+        return Json(_sim.IsRunning);
+    }
 
-        Task.WaitAll(lineTasks);
-
-        var statistics = lines.Select((line, idx) => line.CollectStatistics(idx + 1, shiftDuration)).ToList();
-
-        return View("Result", statistics);
+    [HttpGet]
+    public JsonResult GetStats()
+    {
+        return Json(_sim.GetStats());
     }
 }

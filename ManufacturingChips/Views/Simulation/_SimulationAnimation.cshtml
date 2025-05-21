@@ -1,0 +1,18 @@
+@model ManufacturingChips.Models.SimulationView
+
+<div id="animation" class="animation-container">
+    @for (int line = 1; line <= Model.LinesCount; line++)
+    {
+        <div class="line" style="--mp:@Model.MachinesPerLine">
+            <div class="queue" id="queue@line">
+                <div>Line #@line</div>
+            </div>
+            @for (int m = 0; m < Model.MachinesPerLine; m++)
+            {
+                <div class="machine" data-index="@m">
+                    M@(m+1)
+                </div>
+            }
+        </div>
+    }
+</div>

@@ -1,42 +1,56 @@
-using ManufacturingChips.Models;
-using ManufacturingChips.Services;
+using ManufacturingChips.Interfaces;
 using Microsoft.AspNetCore.Mvc;
+using ManufacturingChips.Models;
 
 namespace ManufacturingChips.Controllers;
 
 public class SimulationController : Controller
 {
-    private static readonly SimulationService _simService = new();
+    private readonly ISimulationService _sim;
+
+    public SimulationController(ISimulationService sim)
+    {
+        _sim = sim;
+    }
+
+    [HttpGet]
+    public IActionResult Index(
+        int LinesCount = 3,
+        int MachinesPerLine = 4,
+        int ShiftDurationSeconds = 120)
+    {
+        var model = new SimulationView
+        {
+            LinesCount = LinesCount,
+            MachinesPerLine = MachinesPerLine,
+            ShiftDurationSeconds = ShiftDurationSeconds
+        };
+        return View(model);
+    }
 
     [HttpPost]
     public IActionResult StartSimulation([FromBody] SimulationView vm)
     {
-        _simService.Start(vm.LinesCount, vm.MachinesPerLine, vm.ShiftDurationSeconds);
+        _sim.Start(vm.LinesCount, vm.MachinesPerLine, vm.ShiftDurationSeconds);
         return Ok();
     }
 
     [HttpPost]
     public IActionResult Stop()
     {
-        _simService.Stop();
+        _sim.Stop();
         return Ok();
     }
 
     [HttpGet]
-    public JsonResult IsRunning() => Json(_simService.IsRunning);
-
-    [HttpGet]
-    public JsonResult GetStats() => Json(_simService.GetStats());
-
-    [HttpGet]
-    public IActionResult Index(int LinesCount = 1, int MachinesPerLine = 1, int ShiftDurationSeconds = 10)
+    public JsonResult IsRunning()
     {
-        var vm = new SimulationView
-        {
-            LinesCount = LinesCount,
-            MachinesPerLine = MachinesPerLine,
-            ShiftDurationSeconds = ShiftDurationSeconds
-        };
-        return View(vm);
+        return Json(_sim.IsRunning);
+    }
+
+    [HttpGet]
+    public JsonResult GetStats()
+    {
+        return Json(_sim.GetStats());
     }
 }

@@ -1,233 +1,246 @@
-// wwwroot/js/simulation.js
+"use strict";
 
-let pollInterval = null;
-let timerInterval = null;
-let shiftEndTime = null;
-let spawnStop = false;
+let shiftTimer    = null;
+let shiftEndTime  = null;
+let spawnStop     = false;
 
-// рівномірний розподіл [mean−dev, mean+dev]
-function nextUniform(mean, dev) {
-    return mean - dev + Math.random() * (2 * dev);
+class LineAnimator {
+    constructor(lineIdx) {
+        this.lineIdx = lineIdx;
+    }
+
+    get lineElem() {
+        return document.querySelectorAll('.line')[this.lineIdx];
+    }
+
+    get centers() {
+        const machines = Array.from(this.lineElem.querySelectorAll('.machine'));
+        const rect     = this.lineElem.getBoundingClientRect();
+        return machines.map(m => {
+            const r = m.getBoundingClientRect();
+            return r.left + r.width/2 - rect.left;
+        });
+    }
+
+    animateArrival(chipId) {
+        if (spawnStop) return;
+        const queueBox = this.lineElem.querySelector('.queue');
+        const countDom = queueBox.querySelector('.queue-count');
+        const chip     = document.createElement('div');
+        chip.className      = 'chip';
+        chip.dataset.chipId = chipId;
+        queueBox.appendChild(chip);
+        countDom.textContent = queueBox.querySelectorAll('.chip').length;
+
+        logEvent(`Лінія ${this.lineIdx + 1}: черга [Chip ${chipId.substring(0, 4)}]`);
+    }
+
+    animateQueueToService(chipId) {
+        if (spawnStop) return;
+        const queueBox = this.lineElem.querySelector('.queue');
+        const countDom = queueBox.querySelector('.queue-count');
+        const chip = queueBox.querySelector(`.chip[data-chip-id="${chipId}"]`);
+        if (chip) {
+            chip.remove();
+            countDom.textContent = queueBox.querySelectorAll('.chip').length;
+        }
+
+        logEvent(`Лінія ${this.lineIdx + 1}: черга -> M1 [Chip ${chipId.substring(0, 4)}]`);
+
+        const product = document.createElement('div');
+        product.className      = 'product';
+        product.dataset.chipId = chipId;
+        product.style.position = 'absolute';
+        product.style.left     = `${this.centers[0]}px`;
+        this.lineElem.appendChild(product);
+    }
+
+    animateTransfer(chipId, fromMachine, toMachine) {
+        if (spawnStop) return;
+        const product = this.lineElem.querySelector(`.product[data-chip-id="${chipId}"]`);
+        if (!product) return;
+
+        let targetX;
+        if (toMachine >= this.centers.length) {
+            const rect = this.lineElem.getBoundingClientRect();
+            targetX = rect.width + 20;
+        } else {
+            targetX = this.centers[toMachine];
+        }
+
+        product.style.transition = 'left 0.5s ease-in-out, opacity 0.5s';
+        product.style.left       = `${targetX}px`;
+
+        if (toMachine >= this.centers.length) {
+            product.style.opacity = '0';
+            product.addEventListener('transitionend', () => {
+                if (product.parentElement) product.remove();
+                logEvent(`Лінія ${this.lineIdx + 1}: завершення [Chip ${chipId.substring(0, 4)}]`);
+            }, { once: true });
+        } else {
+            logEvent(
+                `Лінія ${this.lineIdx + 1}: перенесення M${fromMachine + 1} -> M${toMachine + 1} [Chip ${chipId.substring(0, 4)}]`
+            );
+        }
+    }
+}
+
+const animators = [];
+function setupAnimators() {
+    animators.length = 0;
+    document.querySelectorAll('.line').forEach((_, idx) => {
+        animators.push(new LineAnimator(idx));
+    });
 }
 
 function logEvent(msg) {
-    const ul = document.getElementById("logList");
+    const ul   = document.getElementById("logList");
     const time = new Date().toLocaleTimeString();
-    const li = document.createElement("li");
+    const li   = document.createElement("li");
     li.textContent = `[${time}] ${msg}`;
     ul.prepend(li);
 }
 
-// Рендер статистики відповідно до завдання
-function renderStats(data) {
-    const div = document.getElementById("statsContainer");
-    if (!data.stats || !data.stats.length) {
-        div.innerHTML = "<p>Дані статистики відсутні.</p>";
-        return;
-    }
-    let html = `<p><strong>Загальна кількість деталей:</strong> ${data.total}</p>`;
-    data.stats.forEach(line => {
-        html += `<h3>Лінія ${line.lineNumber}</h3>`;
-        html += `<table class="table table-bordered">
-<thead><tr>
-  <th>Машина</th>
-  <th>Використання (%)</th>
-  <th>Серед. час у черзі (с)</th>
-  <th>Макс. довж. черги</th>
-  <th>Сер. час обслуги (с)</th>
-  <th>Оброблено</th>
-</tr></thead><tbody>`;
-        line.machineStats.forEach(m => {
-            html += `<tr>
-  <td>${m.machineIndex + 1}</td>
-  <td>${(m.utilization * 100).toFixed(1)}</td>
-  <td>${m.averageQueueTime.toFixed(2)}</td>
-  <td>${m.maxQueueLength}</td>
-  <td>${m.averageServiceTime.toFixed(2)}</td>
-  <td>${m.processedProducts}</td>
-</tr>`;
-        });
-        html += `</tbody></table>`;
-    });
-    div.innerHTML = html;
-}
+function delay(ms) { return new Promise(res => setTimeout(res, ms)); }
 
-// Анімація одного продукту через всі машини на лінії
-async function animateProduct(lineElem, idx) {
-    const queueBox = lineElem.querySelector(".queue");
-    const queueCount = queueBox.querySelector(".queue-count");
-    const machines = [...lineElem.querySelectorAll(".machine")];
-    const rect = lineElem.getBoundingClientRect();
-    const centers = machines.map(m => {
-        const r = m.getBoundingClientRect();
-        return r.left + r.width/2 - rect.left;
-    });
-    const finishX = lineElem.clientWidth - 20;
-
-    // enqueue
-    const chip = document.createElement("div");
-    chip.className = "chip";
-    queueBox.appendChild(chip);
-    queueCount.textContent = queueBox.querySelectorAll('.chip').length;
-    logEvent(`Лінія ${idx+1}: деталь у чергу`);
-
-    // продукт
-    const product = document.createElement("div");
-    product.className = "product";
-    const startX = queueBox.offsetLeft + queueBox.offsetWidth + 10;
-    product.style.left = startX + "px";
-    lineElem.appendChild(product);
-
-    for (let m = 0; m < machines.length; m++) {
-        const machineElem = machines[m];
-        const machineCount = machineElem.querySelector('.machine-count');
-
-        // рух
-        product.style.transition = `left 0.5s ease-in-out`;
-        product.style.left = centers[m] + "px";
-        await new Promise(res => setTimeout(res, 500));
-
-        // dequeue
-        if (m === 0) {
-            queueBox.removeChild(chip);
-            queueCount.textContent = queueBox.querySelectorAll('.chip').length;
-            logEvent(`Лінія ${idx+1}: вийшла з черги`);
-        }
-
-        // сервіс
-        const srvParams = [
-            { mean:12, dev:1 },
-            { mean:13, dev:3 },
-            { mean:7,  dev:1 },
-            { mean:8,  dev:3 }
-        ][m] || { mean:8, dev:3 };
-        const srv = nextUniform(srvParams.mean, srvParams.dev) * 1000;
-        machineCount.textContent = parseInt(machineCount.textContent) + 1;
-        logEvent(`Лінія ${idx+1}, M${m+1}: обслуговування ${(srv/1000).toFixed(2)}с`);
-        await new Promise(res => setTimeout(res, srv));
-        machineCount.textContent = parseInt(machineCount.textContent) - 1;
-
-        // передача
-        if (m < machines.length - 1) {
-            const trParams = [
-                { mean:2, dev:1 },
-                { mean:1, dev:1 },
-                { mean:3, dev:1 }
-            ][m] || { mean:1, dev:1 };
-            const tr = nextUniform(trParams.mean, trParams.dev) * 1000;
-            logEvent(`Лінія ${idx+1}, M${m+1}->M${m+2}: передача ${(tr/1000).toFixed(2)}с`);
-            await new Promise(res => setTimeout(res, tr));
-        }
-    }
-
-    // фінал
-    product.style.transition = `left 0.5s ease-in-out`;
-    product.style.left = finishX + "px";
-    await new Promise(res => setTimeout(res, 500));
-    product.remove();
-    logEvent(`Лінія ${idx+1}: завершено`);
-}
-
-// Запуск спавна
-function startAnimation() {
-    spawnStop = false;
-    document.querySelectorAll(".line").forEach((lineElem, idx) => {
-        async function spawn() {
-            if (spawnStop) return;
-            const delay = nextUniform(10, 2) * 1000;
-            await new Promise(res => setTimeout(res, delay));
-            if (spawnStop) return;
-            animateProduct(lineElem, idx);
-            spawn();
-        }
-        spawn();
-    });
-}
-
-// Зупинка і отримання статистики
-async function stopAndFetch() {
-    spawnStop = true;
-    clearInterval(timerInterval);
-    clearInterval(pollInterval);
-    document.getElementById("stopBtn").disabled = true;
-    document.getElementById("startBtn").disabled = false;
-
-    // відправляємо stop на сервер, чекаємо завершення
-    await fetch('/Simulation/Stop', { method: 'POST' });
-    const check = setInterval(async () => {
-        const running = await fetch('/Simulation/IsRunning').then(r=>r.json());
-        if (!running) {
-            clearInterval(check);
-            fetchStats();
-        }
-    }, 500);
+function clearUI() {
+    document.querySelectorAll('.chip, .product').forEach(el => el.remove());
+    document.querySelectorAll('.queue-count').forEach(c => c.textContent = '0');
+    document.getElementById("logList").innerHTML = "";
+    document.getElementById("statsContainer").innerHTML = "<p>Поки статистики немає.</p>";
 }
 
 function updateTimer() {
     const msLeft = shiftEndTime - Date.now();
     if (msLeft <= 0) {
         document.getElementById("timeDisplay").textContent = "00:00";
-        // одразу зупиняємо симуляцію
         stopAndFetch();
     } else {
-        const secs = Math.floor(msLeft/1000);
-        const m = String(Math.floor(secs/60)).padStart(2,'0');
-        const s = String(secs%60).padStart(2,'0');
+        const secs = Math.floor(msLeft / 1000);
+        const m    = String(Math.floor(secs / 60)).padStart(2, '0');
+        const s    = String(secs % 60).padStart(2, '0');
         document.getElementById("timeDisplay").textContent = `${m}:${s}`;
     }
 }
-
-function startPolling() {
-    pollInterval = setInterval(async () => {
-        const running = await fetch('/Simulation/IsRunning').then(r => r.json());
-        if (!running) {
-            stopAndFetch();
-        }
-    }, 1000);
+function startShiftTimer() {
+    shiftTimer = setInterval(updateTimer, 1000);
 }
-
+async function stopAndFetch() {
+    spawnStop = true;
+    clearInterval(shiftTimer);
+    document.getElementById("stopBtn").disabled = true;
+    document.getElementById("startBtn").disabled = false;
+    await fetch('/Simulation/Stop', { method: 'POST' });
+    const check = setInterval(async () => {
+        const running = await (await fetch('/Simulation/IsRunning')).json();
+        if (!running) {
+            clearInterval(check);
+            fetchStats();
+        }
+    }, 500);
+}
 async function fetchStats() {
-    const data = await fetch('/Simulation/GetStats').then(r => r.json());
+    const data = await (await fetch('/Simulation/GetStats')).json();
     renderStats(data);
 }
+function renderStats(data) {
+    const div = document.getElementById("statsContainer");
+    if (!data.stats?.length) {
+        div.innerHTML = "<p>Дані статистики відсутні.</p>";
+        return;
+    }
+    let html = `
+        <p><strong>Загалом надійшло деталей:</strong> ${data.totalArrived}</p>
+        <p><strong>Загалом завершено виробів:</strong> ${data.totalProcessed}</p>
+        <p><strong>Залишилося необроблених:</strong> ${data.totalUnprocessed}</p>
+    `;
+    data.stats.forEach(line => {
+        html += `
+        <h3>Лінія ${line.lineNumber}</h3>
+        <p>Завершено повністю: <strong>${line.completedCount}</strong></p>
+        <p>У черзі: <strong>${line.inQueueCount}</strong>, В роботі: <strong>${line.inServiceCount}</strong></p>
+        <table class="table table-bordered"><thead><tr>
+            <th>Машина</th><th>Використання (%)</th><th>Сер. час у черзі (с)</th>
+            <th>Макс. довж. черги</th><th>Сер. час обслуги (с)</th><th>Оброблено машиною</th>
+        </tr></thead><tbody>
+    `;
+        line.machineStats.forEach(m => {
+            html += `
+            <tr>
+                <td>${m.machineIndex + 1}</td>
+                <td>${(m.utilization * 100).toFixed(1)}</td>
+                <td>${m.averageQueueTime.toFixed(2)}</td>
+                <td>${m.maxQueueLength}</td>
+                <td>${m.averageServiceTime.toFixed(2)}</td>
+                <td>${m.processedCount}</td>
+            </tr>
+        `;
+        });
+        html += `</tbody></table>`;
+    });
+    div.innerHTML = html;
+}
 
-// Apply налаштувань
-document.getElementById("applyBtn").addEventListener("click", async () => {
-    const form = document.getElementById("simForm");
-    const lines = +form.elements["LinesCount"].value;
-    const machines = +form.elements["MachinesPerLine"].value;
-    const html = await fetch(`/Simulation?LinesCount=${lines}&MachinesPerLine=${machines}`)
-        .then(r => r.text());
-    const temp = document.createElement("div");
-    temp.innerHTML = html;
-    const newAnim = temp.querySelector("#animation");
-    document.getElementById("animation").replaceWith(newAnim);
+const connection = new signalR.HubConnectionBuilder()
+    .withUrl("/simulationHub")
+    .withAutomaticReconnect()
+    .build();
+
+connection.on("OnArrival", ev => {
+    animators[ev.lineIdx].animateArrival(ev.chipId);
 });
 
-// Start
+connection.on("OnQueueToService", ev => {
+    animators[ev.lineIdx].animateQueueToService(ev.chipId);
+});
+
+connection.on("OnMachineTransfer", ev => {
+    animators[ev.lineIdx].animateTransfer(ev.chipId, ev.fromMachine, ev.toMachine);
+});
+
+connection.on("OnCompletion", ev => {
+    animators[ev.lineIdx].animateTransfer(ev.chipId, ev.fromMachine, ev.toMachine + 1);
+});
+
+connection.start().catch(err => console.error(err));
+
+document.getElementById("applyBtn").addEventListener("click", async () => {
+    const form     = document.getElementById("simForm");
+    const lines    = +form.elements["LinesCount"].value;
+    const machines = +form.elements["MachinesPerLine"].value;
+    const html     = await (await fetch(
+        `/Simulation?LinesCount=${lines}&MachinesPerLine=${machines}`
+    )).text();
+    const tmp      = document.createElement("div");
+    tmp.innerHTML  = html;
+    document.getElementById("animation").replaceWith(
+        tmp.querySelector("#animation")
+    );
+    clearUI();
+    setupAnimators();
+});
+
 document.getElementById("startBtn").addEventListener("click", async () => {
-    const form = document.getElementById("simForm");
+    clearUI();
+    spawnStop = false;
+    const form    = document.getElementById("simForm");
     const payload = {
         LinesCount: +form.elements["LinesCount"].value,
         MachinesPerLine: +form.elements["MachinesPerLine"].value,
         ShiftDurationSeconds: +form.elements["ShiftDurationSeconds"].value
     };
-
     await fetch('/Simulation/StartSimulation', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {'Content-Type':'application/json'},
         body: JSON.stringify(payload)
     });
-
     document.getElementById("startBtn").disabled = true;
-    document.getElementById("stopBtn").disabled = false;
+    document.getElementById("stopBtn").disabled  = false;
     shiftEndTime = Date.now() + payload.ShiftDurationSeconds * 1000;
     updateTimer();
-    timerInterval = setInterval(updateTimer, 1000);
-
-    startAnimation();
-    startPolling();
+    startShiftTimer();
 });
 
-// Manual stop
 document.getElementById("stopBtn").addEventListener("click", stopAndFetch);
+
+setupAnimators();
